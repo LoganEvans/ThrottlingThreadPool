@@ -1,0 +1,38 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+COPTS = ["-std=c++20"]
+
+cc_library(
+  name = "threadpool",
+  srcs = ["threadpool.cc"],
+  hdrs = ["threadpool.h"],
+  deps = [
+    "@com_google_glog//:glog",
+  ],
+  copts = COPTS,
+)
+
+cc_test(
+  name = "threadpool_test",
+  srcs = ["threadpool_test.cc"],
+  deps = [
+    ":threadpool",
+    "@gtest//:gtest",
+    "@gtest//:gtest_main",
+    "@com_google_glog//:glog",
+  ],
+  copts = COPTS,
+)
+
+cc_binary(
+  name = "threadpool_benchmark",
+  srcs = ["threadpool_benchmark.cc"],
+  deps = [
+    ":threadpool",
+    "@benchmark//:benchmark",
+  ],
+  copts = COPTS,
+)
