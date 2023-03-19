@@ -18,6 +18,47 @@ namespace theta {
 class Executor;
 class ExecutorImpl;
 
+// Tasks:
+//
+//               +-------------+
+//      +------->| prioritized +---------+
+//      |        +------------ +         |
+//      |             ^                  |
+//      |             |                  |
+//      |             v                  v
+// +--------+    +-------------+    +----------+
+// | queued | -> | throttled   | -> | finished |
+// +--------+    +-------------+    +----------+
+//      |             ^                  ^
+//      |             |                  |
+//      |             v                  |
+//      |        +-------------+         |
+//      +------->|  running    |---------+
+//               +-------------+
+//
+// The scaling logic controls how many tasks from each Executor may be in each
+// of the three active states. A low-latency Executor will be able to have
+// tasks in a prioritized state, but cannot have tasks in a running state.
+// Conversely, a normal Executor can have tasks in a running state, but cannot
+// have tasks in a prioritized state.
+//
+// The number of tasks from each Executor allowed in the running/prioritized
+// states is at least equal to the thread_weight configuration for the
+// Executor. However, the scaling logic may temporarily increase the limit if
+// the tasks are not consuming their resources. This is intended to allow extra
+// IO-bound threads to run with a normal nice value. If an excess number of
+// threads are running and then start to consume an unfair share of the
+// resources, extra tasks will be throttled with a nice value of 20.
+//
+// A task can be started in a throttled state if the system has an excess of
+// resources but the Executor has reached its limit for tasks in a
+// running/prioritized state.
+//
+// The ScalingThreadpool can be configured to only allow running/prioritized
+// tasks on a subset of available cores. A throttled task may run on any core.
+// When a throttled task is a candidate to be promoted to a running/prioritized
+// task, if it is running on one of the quiet cores, the scaler may use various
+// heuristics and leave it in a throttled state.
 class ScalingThreadpool {
   friend class Executor;
   friend class ExecutorImpl;
