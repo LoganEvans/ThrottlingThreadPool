@@ -6,11 +6,23 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 COPTS = ["-std=c++20"]
 
 cc_library(
+  name = "executor",
+  srcs = ["executor.cc"],
+  hdrs = ["executor.h"],
+  deps = [
+    "@com_google_glog//:glog",
+  ],
+  copts = COPTS,
+  linkopts = ["-lpthread"],
+)
+
+cc_library(
   name = "threadpool",
   srcs = ["threadpool.cc"],
   hdrs = ["threadpool.h"],
   deps = [
     "@com_google_glog//:glog",
+    ":executor",
   ],
   copts = COPTS,
 )
@@ -25,6 +37,7 @@ cc_test(
     "@com_google_glog//:glog",
   ],
   copts = COPTS,
+  size = "small",
 )
 
 cc_binary(
