@@ -1,5 +1,6 @@
 #include "threadpool.h"
 
+#include <array>
 #include <thread>
 
 using namespace std::chrono_literals;
@@ -15,18 +16,48 @@ ScalingThreadpool::ConfigureOpts::defaultOpts() {
       .set_throttle_interval(100ms);
 }
 
+/*static*/
+ScalingThreadpool& ScalingThreadpool::getInstance() {
+  static ScalingThreadpool instance;
+  return instance;
+}
+
 void ScalingThreadpool::configure(const ScalingThreadpool::ConfigureOpts& opts) {
   shared_mutex_.lock();
   opts_ = opts;
   shared_mutex_.unlock();
 }
 
-ScalingThreadpool::~ScalingThreadpool() {
-  shutdown_.store(true, std::memory_order_release);
-  normal_prio_sem_.release(threads_.size());
+Executor ScalingThreadpool::create(Executor::Opts opts) {
+  opts.set_threadpool(this).set_maybe_run_immediately_callback(
+      &ScalingThreadpool::maybe_run_immediately);
+  std::unique_ptr<Executor::Impl> impl;
+  if (opts.priority_policy() == PriorityPolicy::FIFO) {
+    impl = std::unique_ptr<FIFOExecutorImpl>(
+        new FIFOExecutorImpl(std::move(opts)));
+  } else {
+    throw NotImplemented();
+  }
 
-  for (auto& thread : threads_) {
-    thread.join();
+  auto* ptr = impl.get();
+
+  shared_mutex_.lock();
+  executors_.push_back(std::move(impl));
+  shared_mutex_.unlock();
+
+  Executor ex{ptr};
+  return ex;
+}
+
+ScalingThreadpool::~ScalingThreadpool() {
+  for (auto& worker : workers_) {
+    worker->shutdown();
+  }
+
+  for (auto prio : std::to_array({TaskQueues::NicePriority::kThrottled,
+                                  TaskQueues::NicePriority::kRunning,
+                                  TaskQueues::NicePriority::kPrioritized})) {
+    queues_.queue(prio)->unblock_workers(workers_.size());
   }
 }
 
@@ -34,68 +65,27 @@ ScalingThreadpool::ScalingThreadpool() {
   opts_ = ConfigureOpts::defaultOpts();
 
   // TODO(lpe): Throttled and limit CPUs!
-  threads_.reserve(opts_.thread_limit());
+  workers_.reserve(opts_.thread_limit());
   for (size_t i = 0; i < opts_.thread_limit(); i++) {
-    threads_.push_back(std::thread{&ScalingThreadpool::task_loop, this});
+    workers_.push_back(
+        std::make_unique<Worker>(&queues_, TaskQueues::NicePriority::kRunning));
   }
 }
 
-ExecutorImpl* ScalingThreadpool::create(const ExecutorImpl::Opts& opts) {
-  shared_mutex_.lock();
-
-  ExecutorImpl* ptr = nullptr;
-  if (opts.priority_policy() == PriorityPolicy::FIFO) {
-    auto uptr = std::unique_ptr<FIFOExecutorImpl>(new FIFOExecutorImpl(opts));
-    ptr = uptr.get();
-    executors_.push_back(std::move(uptr));
-  } else {
-    throw NotImplemented();
+bool ScalingThreadpool::maybe_run_immediately(ExecutorStats* stats, Func func) {
+  if (stats->limit_running() > stats->num_running()) {
+    queues_.queue(stats->run_state_is_normal()
+                      ? TaskQueues::NicePriority::kRunning
+                      : TaskQueues::NicePriority::kPrioritized)->push(func);
+    return true;
   }
 
-  shared_mutex_.unlock();
-  return ptr;
-}
+  return false;
 
-void ScalingThreadpool::task_loop() {
-  while (true) {
-    normal_prio_sem_.acquire();
+  // TODO(lpe): This needs to look at stats->limit_running or throttled, and
+  // then possibly wake up a worker to take care of this func.
 
-    if (shutdown_.load(std::memory_order_relaxed)) {
-      break;
-    }
-
-    shared_mutex_.lock_shared();
-    Executor::Func func{nullptr};
-    for (auto& executor : executors_) {
-      func = executor->pop();
-      if (func) {
-        break;
-      }
-    }
-
-    shared_mutex_.unlock_shared();
-
-    if (func) {
-      func();
-    } else {
-      normal_prio_sem_.release();
-    }
-  }
-}
-
-void ScalingThreadpool::notify_new_task() {
-  normal_prio_sem_.release();
-}
-
-void Executor::post(Executor::Func func) {
-  printf("> post()\n");
-  impl_->post(func);
-  ScalingThreadpool::getInstance().notify_new_task();
-  printf("< post()\n");
-}
-
-Executor::Func Executor::pop() {
-  return impl_->pop();
+  //return false;
 }
 
 }

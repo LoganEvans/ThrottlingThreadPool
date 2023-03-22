@@ -7,16 +7,15 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
-#include <semaphore>
 #include <shared_mutex>
 #include <thread>
 
 #include "executor.h"
+#include "fifo_executor.h"
 
 namespace theta {
 
 class Executor;
-class ExecutorImpl;
 
 // The ScalingThreadpool can be configured to only allow running/prioritized
 // tasks on a subset of available cores. A throttled task may run on any core.
@@ -25,7 +24,8 @@ class ExecutorImpl;
 // heuristics and leave it in a throttled state.
 class ScalingThreadpool {
   friend class Executor;
-  friend class ExecutorImpl;
+  friend class Impl;
+  using Func = Task::Func;
 
  public:
   class ConfigureOpts {
@@ -60,10 +60,7 @@ class ScalingThreadpool {
     std::chrono::milliseconds throttle_interval_{0};
   };
 
-  static ScalingThreadpool& getInstance() {
-    static ScalingThreadpool instance;
-    return instance;
-  }
+  static ScalingThreadpool& getInstance();
 
   ~ScalingThreadpool();
 
@@ -72,69 +69,22 @@ class ScalingThreadpool {
 
   void configure(const ConfigureOpts& opts);
 
+  Executor create(Executor::Opts opts);
+
  private:
   ScalingThreadpool();
 
-  ExecutorImpl* create(const ExecutorImpl::Opts& opts);
   void task_loop();
-  void notify_new_task();
 
   std::shared_mutex shared_mutex_;
   ConfigureOpts opts_;
 
-  std::vector<std::thread> threads_;
-  std::atomic<bool> shutdown_{false};
-  std::counting_semaphore<std::numeric_limits<int32_t>::max()> high_prio_sem_{
-      0};
-  std::counting_semaphore<std::numeric_limits<int32_t>::max()> normal_prio_sem_{
-      0};
-  std::counting_semaphore<std::numeric_limits<int32_t>::max()> low_prio_sem_{0};
+  std::vector<std::unique_ptr<Worker>> workers_;
+  TaskQueues queues_;
 
-  std::vector<std::unique_ptr<ExecutorImpl>> executors_;
+  std::vector<std::unique_ptr<Executor::Impl>> executors_;
+
+  bool maybe_run_immediately(ExecutorStats* stats, Func func);
 };
 
-class Executor {
-  friend class ScalingThreadpool;
-
- public:
-  using Clock = ExecutorImpl::Clock;
-  using Func = ExecutorImpl::Func;
-  using Opts = ExecutorImpl::Opts;
-
-  class Stats {
-   public:
-    size_t tasks_running() const;
-    size_t tasks_waiting() const;
-    size_t tasks_throttled() const;
-    size_t tasks_finished() const;
-
-    bool transition(int running_delta, int throttled_delta, int waiting_delta,
-                    int finished_delta);
-
-   private:
-    size_t tasks_running_{0};
-    size_t tasks_waiting_{0};
-    size_t tasks_throttled_{0};
-    size_t tasks_finished_{0};
-  };
-
-  Executor(Opts opts)
-      : opts_(opts), impl_(ScalingThreadpool::getInstance().create(opts_)) {}
-
-  const Opts& get_opts() const { return opts_; }
-
-  void post(Func func);
-  void post(Func func, int priority);
-  void post(Func func, std::chrono::time_point<Clock> deadline,
-            Func expireCallback = nullptr);
-
- private:
-  const Opts opts_;
-
-  Stats stats_;
-
-  ExecutorImpl* impl_;
-
-  Func pop();
-};
-}
+}  // namespace theta

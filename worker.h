@@ -1,42 +1,33 @@
 #pragma once
 
-#include "executor.h"
+#include <atomic>
+#include <thread>
+
+#include "task.h"
 
 namespace theta {
 
-class WorkQueue {
- public:
-  using Func = ExecutorImpl::Func;
-
-  void push(Func func);
-  Func pop();
-
- private:
-  
-};
+class ScalingThreadpool;
 
 class Worker {
-  enum class RunState {
-    kThrottled,
-    kRunning,
-    kPrioritized,
-  };
-
-
-}
-
-class Workers {
  public:
-  static Workers& getInstance() {
-    static Workers instance;
-    return instance;
-  }
+  using Func = Task::Func;
 
-  Workers(const Workers&) = delete;
-  void operator=(const Workers&) = delete;
+  Worker(TaskQueues* queues, TaskQueues::NicePriority priority);
+  ~Worker();
+
+  void shutdown();
+
+  TaskQueues::NicePriority nice_priority() const;
+  void set_nice_priority(TaskQueues::NicePriority priority);
 
  private:
-  Workers() {}
-}
+  TaskQueues* queues_;
+  std::atomic<TaskQueues::NicePriority> priority_;
+  std::thread thread_;
+  std::atomic<bool> shutdown_{false};
+
+  void run_loop();
+};
 
 }  // namespace theta

@@ -35,9 +35,23 @@ cc_library(
   deps = [
     "@com_google_glog//:glog",
     ":task",
+    ":worker",
   ],
   copts = COPTS,
   linkopts = ["-lpthread"],
+)
+
+cc_library(
+  name = "fifo_executor",
+  srcs = ["fifo_executor.cc"],
+  hdrs = ["fifo_executor.h"],
+  deps = [
+    "@com_google_glog//:glog",
+    ":task",
+    ":worker",
+    ":executor",
+  ],
+  copts = COPTS,
 )
 
 cc_library(
@@ -47,13 +61,14 @@ cc_library(
   deps = [
     "@com_google_glog//:glog",
     ":executor",
+    ":fifo_executor",
   ],
   copts = COPTS,
 )
 
 cc_test(
-  name = "threadpool_test",
-  srcs = ["threadpool_test.cc"],
+  name = "fifo_executor_test",
+  srcs = ["fifo_executor_test.cc"],
   deps = [
     ":threadpool",
     "@gtest//:gtest",

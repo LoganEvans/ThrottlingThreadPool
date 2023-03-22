@@ -1,5 +1,10 @@
 #pragma once
 
+#include <functional>
+#include <queue>
+#include <semaphore>
+#include <shared_mutex>
+
 namespace theta {
 
 // A task wraps a Func with information about scheduling.
@@ -50,6 +55,46 @@ namespace theta {
 // running/prioritized state.
 //
 class Task {
-  
+ public:
+  using Func = std::function<void()>;
 };
-}
+
+class TaskQueue {
+ public:
+  using Func = Task::Func;
+
+  void push(Task::Func func);
+  Task::Func pop();
+  Task::Func pop_blocking();
+
+  void unblock_workers(size_t n);
+
+ private:
+  std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
+
+  // TODO(lpe): This needs to be lock-free. This mutex is for quick development
+  // only.
+  std::shared_mutex shared_mutex_;
+  std::queue<Task::Func> queue_;
+};
+
+class TaskQueues {
+ public:
+  enum class NicePriority {
+    kThrottled,
+    kRunning,
+    kPrioritized,
+  };
+
+  TaskQueue* queue(NicePriority priority);
+
+  void push(NicePriority priority, Task::Func func);
+  Task::Func pop_blocking(NicePriority priority);
+
+ private:
+  TaskQueue throttled_queue_;
+  TaskQueue running_queue_;
+  TaskQueue prioritized_queue_;
+};
+
+}  // namespace theta
