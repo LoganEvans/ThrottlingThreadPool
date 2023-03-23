@@ -1,11 +1,16 @@
 #include "worker.h"
 
 #include <glog/logging.h>
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
 
 namespace theta {
 
 Worker::Worker(TaskQueues* queues, TaskQueues::NicePriority priority)
-    : queues_(queues), priority_(priority), thread_(&Worker::run_loop, this) {}
+    : queues_(queues), thread_(&Worker::run_loop, this) {
+  set_nice_priority(priority);
+}
 
 Worker::~Worker() { thread_.join(); }
 
@@ -16,7 +21,24 @@ TaskQueues::NicePriority Worker::nice_priority() const {
 }
 
 void Worker::set_nice_priority(TaskQueues::NicePriority priority) {
+  static int sched_policy = sched_getscheduler(getpid());
+
   priority_.store(priority, std::memory_order_release);
+
+  sched_param param;
+  switch (priority) {
+    case TaskQueues::NicePriority::kThrottled:
+      param.sched_priority = -20;
+      break;
+    case TaskQueues::NicePriority::kPrioritized:
+      param.sched_priority = 19;
+      break;
+    default:
+      param.sched_priority = 0;
+      break;
+  }
+
+  pthread_setschedparam(thread_.native_handle(), sched_policy, &param);
 }
 
 void Worker::run_loop() {
