@@ -4,6 +4,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <semaphore>
 #include <shared_mutex>
 
@@ -129,6 +130,7 @@ class TaskQueue {
   // allow a Task to be in a zombie state.
 
   void unblock_workers(size_t n);
+  void reap_finished();
 
  private:
   std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
@@ -139,6 +141,7 @@ class TaskQueue {
   std::deque<std::shared_ptr<Task>> queue_;
 
   std::shared_ptr<Task> pop_impl();
+  void reap_finished(const std::unique_lock<std::shared_mutex>&);
 };
 
 class TaskQueues {

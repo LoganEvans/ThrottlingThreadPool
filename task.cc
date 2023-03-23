@@ -1,8 +1,7 @@
 #include "task.h"
 
-#include <mutex>
-
 namespace theta {
+
 void TaskQueue::push(std::shared_ptr<Task> task) {
   {
     std::unique_lock lock{shared_mutex_};
@@ -28,16 +27,28 @@ void TaskQueue::unblock_workers(size_t n) {
   sem_.release(n);
 }
 
-std::shared_ptr<Task> TaskQueue::pop_impl() {
-  std::shared_ptr<Task> task_ptr{nullptr};
-
+void TaskQueue::reap_finished() {
   std::unique_lock lock{shared_mutex_};
-  if (!queue_.empty()) {
-    task_ptr = std::move(queue_.front());
+  reap_finished(lock);
+}
+
+void TaskQueue::reap_finished(const std::unique_lock<std::shared_mutex>&) {
+  while (!queue_.empty() && queue_.front()->state() == Task::State::kFinished) {
     queue_.pop_front();
   }
+}
 
-  return task_ptr;
+std::shared_ptr<Task> TaskQueue::pop_impl() {
+  std::unique_lock lock{shared_mutex_};
+  reap_finished(lock);
+
+  if (!queue_.empty()) {
+    auto task_ptr = std::move(queue_.front());
+    queue_.pop_front();
+    return task_ptr;
+  }
+
+  return nullptr;
 }
 
 TaskQueue* TaskQueues::queue(NicePriority priority) {
