@@ -3,49 +3,41 @@
 #include <mutex>
 
 namespace theta {
-void TaskQueue::push(Task::Func func) {
+void TaskQueue::push(std::shared_ptr<Task> task) {
   {
     std::unique_lock lock{shared_mutex_};
-    queue_.push(func);
+    queue_.push(std::move(task));
   }
 
   sem_.release();
 }
 
-Task::Func TaskQueue::pop() {
+std::shared_ptr<Task> TaskQueue::pop() {
   if (!sem_.try_acquire()) {
     return nullptr;
   }
-
-  Func func{nullptr};
-  {
-    std::unique_lock lock{shared_mutex_};
-    if (!queue_.empty()) {
-      func = queue_.front();
-      queue_.pop();
-    }
-  }
-
-  return func;
+  return pop_impl();
 }
 
-Task::Func TaskQueue::pop_blocking() {
+std::shared_ptr<Task> TaskQueue::pop_blocking() {
   sem_.acquire();
-
-  Func func{nullptr};
-  {
-    std::unique_lock lock{shared_mutex_};
-    if (!queue_.empty()) {
-      func = queue_.front();
-      queue_.pop();
-    }
-  }
-
-  return func;
+  return pop_impl();
 }
 
 void TaskQueue::unblock_workers(size_t n) {
   sem_.release(n);
+}
+
+std::shared_ptr<Task> TaskQueue::pop_impl() {
+  std::shared_ptr<Task> task_ptr{nullptr};
+
+  std::unique_lock lock{shared_mutex_};
+  if (!queue_.empty()) {
+    task_ptr = std::move(queue_.front());
+    queue_.pop();
+  }
+
+  return task_ptr;
 }
 
 TaskQueue* TaskQueues::queue(NicePriority priority) {
@@ -59,12 +51,11 @@ TaskQueue* TaskQueues::queue(NicePriority priority) {
   }
 }
 
-void TaskQueues::push(NicePriority priority, Task::Func func) {
-  queue(priority)->push(func);
+void TaskQueues::push(NicePriority priority, std::shared_ptr<Task> task) {
+  queue(priority)->push(std::move(task));
 }
 
-Task::Func TaskQueues::pop_blocking(NicePriority priority) {
+std::shared_ptr<Task> TaskQueues::pop_blocking(NicePriority priority) {
   return queue(priority)->pop_blocking();
 }
-
 }

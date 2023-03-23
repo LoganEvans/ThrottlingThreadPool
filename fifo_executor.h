@@ -5,7 +5,7 @@
 
 namespace theta {
 
-class FIFOExecutorImpl : public Executor::Impl {
+class FIFOExecutorImpl : public ExecutorImpl {
   friend class ScalingThreadpool;
 
  public:
@@ -13,10 +13,10 @@ class FIFOExecutorImpl : public Executor::Impl {
 
   void post(Func func) override;
 
-  FIFOExecutorImpl(const Executor::Opts& opts) : Executor::Impl(opts) {}
+  FIFOExecutorImpl(const Executor::Opts& opts) : ExecutorImpl(opts) {}
 
  protected:
-  Func pop() override;
+  std::shared_ptr<Task> pop() override;
 
  private:
   TaskQueue queue_;

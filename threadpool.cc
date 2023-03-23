@@ -31,7 +31,7 @@ void ScalingThreadpool::configure(const ScalingThreadpool::ConfigureOpts& opts) 
 Executor ScalingThreadpool::create(Executor::Opts opts) {
   opts.set_threadpool(this).set_maybe_run_immediately_callback(
       &ScalingThreadpool::maybe_run_immediately);
-  std::unique_ptr<Executor::Impl> impl;
+  std::unique_ptr<ExecutorImpl> impl;
   if (opts.priority_policy() == PriorityPolicy::FIFO) {
     impl = std::unique_ptr<FIFOExecutorImpl>(
         new FIFOExecutorImpl(std::move(opts)));
@@ -72,20 +72,20 @@ ScalingThreadpool::ScalingThreadpool() {
   }
 }
 
-bool ScalingThreadpool::maybe_run_immediately(ExecutorStats* stats, Func func) {
+std::shared_ptr<Task> ScalingThreadpool::maybe_run_immediately(
+    ExecutorStats* stats, std::shared_ptr<Task> task) {
   if (stats->limit_running() > stats->num_running()) {
-    queues_.queue(stats->run_state_is_normal()
-                      ? TaskQueues::NicePriority::kRunning
-                      : TaskQueues::NicePriority::kPrioritized)->push(func);
-    return true;
+    queues_
+        .queue(stats->run_state_is_normal()
+                   ? TaskQueues::NicePriority::kRunning
+                   : TaskQueues::NicePriority::kPrioritized)
+        ->push(std::move(task));
+    return nullptr;
   }
 
-  return false;
+  return task;
 
   // TODO(lpe): This needs to look at stats->limit_running or throttled, and
   // then possibly wake up a worker to take care of this func.
-
-  //return false;
 }
-
 }

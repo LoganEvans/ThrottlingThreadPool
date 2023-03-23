@@ -22,7 +22,7 @@ void Worker::set_nice_priority(TaskQueues::NicePriority priority) {
 void Worker::run_loop() {
   while (true) {
     auto priority = nice_priority();
-    Func func = queues_->pop_blocking(priority);
+    auto task = queues_->pop_blocking(priority);
 
     auto new_priority = nice_priority();
     if (priority != new_priority) {
@@ -35,8 +35,8 @@ void Worker::run_loop() {
       break;
     }
 
-    CHECK(func != nullptr);
-    func();
+    CHECK(*task);
+    task->opts().func()();
   }
 }
 

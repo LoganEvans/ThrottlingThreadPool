@@ -1,11 +1,16 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <queue>
 #include <semaphore>
 #include <shared_mutex>
 
 namespace theta {
+
+class ExecutorImpl;
+class Worker;
 
 // A task wraps a Func with information about scheduling.
 //
@@ -57,15 +62,71 @@ namespace theta {
 class Task {
  public:
   using Func = std::function<void()>;
+
+  class Opts {
+   public:
+    Func func() const { return func_; }
+    Opts& set_func(Func val) {
+      func_ = val;
+      return *this;
+    }
+
+    ExecutorImpl* executor() const { return executor_; }
+    Opts& set_executor(ExecutorImpl* val) {
+      executor_ = val;
+      return *this;
+    }
+
+    Worker* worker() const { return worker_; }
+    Opts& set_worker(Worker* val) {
+      worker_ = val;
+      return *this;
+    }
+
+   private:
+    Func func_{nullptr};
+    ExecutorImpl* executor_{nullptr};
+    Worker* worker_{nullptr};
+  };
+
+  enum class State {
+    kCreated,
+    kQueuedExecutor,
+    kQueuedPrioritized,
+    kQueuedThrottled,
+    kQueuedNormal,
+    kRunningPrioritized,
+    kRunningThrottled,
+    kRunningNormal,
+    kFinished,
+  };
+
+  Task(Opts opts) : opts_(opts) {}
+
+  const Opts& opts() const { return opts_; }
+  operator bool() const { return opts().func() != nullptr; }
+
+  State state() const { return state_.load(std::memory_order_acquire); }
+  void set_state(State state) {
+    state_.store(state, std::memory_order_release);
+  }
+
+ private:
+  Opts opts_;
+  std::atomic<State> state_{State::kCreated};
 };
 
 class TaskQueue {
  public:
   using Func = Task::Func;
 
-  void push(Task::Func func);
-  Task::Func pop();
-  Task::Func pop_blocking();
+  void push(std::shared_ptr<Task> task);
+  std::shared_ptr<Task> pop();
+  std::shared_ptr<Task> pop_blocking();
+
+  // TODO(lpe): It would be nice to have a remove function that allowed for a
+  // Task to removed from the center of a queue. The current workaround is to
+  // allow a Task to be in a zombie state.
 
   void unblock_workers(size_t n);
 
@@ -75,7 +136,9 @@ class TaskQueue {
   // TODO(lpe): This needs to be lock-free. This mutex is for quick development
   // only.
   std::shared_mutex shared_mutex_;
-  std::queue<Task::Func> queue_;
+  std::queue<std::shared_ptr<Task>> queue_;
+
+  std::shared_ptr<Task> pop_impl();
 };
 
 class TaskQueues {
@@ -88,8 +151,8 @@ class TaskQueues {
 
   TaskQueue* queue(NicePriority priority);
 
-  void push(NicePriority priority, Task::Func func);
-  Task::Func pop_blocking(NicePriority priority);
+  void push(NicePriority priority, std::shared_ptr<Task> task);
+  std::shared_ptr<Task> pop_blocking(NicePriority priority);
 
  private:
   TaskQueue throttled_queue_;

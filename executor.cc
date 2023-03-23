@@ -33,14 +33,14 @@ size_t ExecutorStats::limit_throttled() const {
   return limit_throttled_.load(std::memory_order_relaxed);
 }
 
-Executor::Executor(Impl* impl) : impl_(impl) {}
+Executor::Executor(ExecutorImpl* impl) : impl_(impl) {}
 
-bool Executor::Impl::maybe_run_immediately(Func func) {
+std::shared_ptr<Task> ExecutorImpl::maybe_run_immediately(
+    std::shared_ptr<Task> task) {
   if (opts().maybe_run_immediately_callback()(opts().threadpool(), &stats_,
-                                              func)) {
-    return true;
+                                              task)) {
+    return nullptr;
   }
-  return false;
+  return task;
 }
-
 }  // namespace theta
