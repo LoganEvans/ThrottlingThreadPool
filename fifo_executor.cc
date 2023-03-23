@@ -10,8 +10,8 @@ void FIFOExecutorImpl::post(Executor::Func func) {
   auto task =
       std::make_shared<Task>(Task::Opts{}.set_func(func).set_executor(this));
 
-  task = maybe_run_immediately(std::move(task));
-  if (*task) {
+  task = maybe_execute_immediately(std::move(task));
+  if (task) {
     queue_.push(std::move(task));
   }
 }

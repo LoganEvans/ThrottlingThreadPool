@@ -33,29 +33,34 @@ class ExecutorStats {
 
   bool run_state_is_normal() const;
 
-  size_t num_running() const;
-  size_t num_waiting() const;
-  size_t num_throttled() const;
-  size_t num_finished() const;
+  int running_num() const;
+  void running_delta(int val);
 
-  size_t limit_running() const;
-  void set_limit_running(size_t val);
+  int waiting_num() const;
+  void waiting_delta(int val);
 
-  size_t limit_throttled() const;
+  int throttled_num() const;
+  void throttled_delta(int val);
 
-  bool transition(int running_delta, int throttled_delta, int waiting_delta,
-                  int finished_delta);
+  int finished_num() const;
+  void finished_delta(int val);
+
+  int running_limit() const;
+  void set_running_limit(int val);
+
+  int throttled_limit() const;
+  void set_throttled_limit(int val);
 
  private:
   const bool run_state_is_normal_;
 
-  std::atomic<size_t> num_running_{0};
-  std::atomic<size_t> num_waiting_{0};
-  std::atomic<size_t> num_throttled_{0};
-  std::atomic<size_t> num_finished_{0};
+  std::atomic<int> running_num_{0};
+  std::atomic<int> waiting_num_{0};
+  std::atomic<int> throttled_num_{0};
+  std::atomic<int> finished_num_{0};
 
-  std::atomic<size_t> limit_running_{0};
-  std::atomic<size_t> limit_throttled_{0};
+  std::atomic<int> running_limit_{0};
+  std::atomic<int> throttled_limit_{0};
 };
 
 class ExecutorOpts {
@@ -89,22 +94,9 @@ class ExecutorOpts {
   }
 
  protected:
-  ScalingThreadpool* threadpool() const { return threadpool_; }
-  ExecutorOpts& set_threadpool(ScalingThreadpool* val) {
-    threadpool_ = val;
-    return *this;
-  }
-
-  std::function<std::shared_ptr<Task>(ScalingThreadpool*, ExecutorStats*,
-                                      std::shared_ptr<Task>)>
-  maybe_run_immediately_callback() const {
-    return maybe_run_immediately_callback_;
-  }
-  ExecutorOpts& set_maybe_run_immediately_callback(
-      std::function<std::shared_ptr<Task>(ScalingThreadpool*, ExecutorStats*,
-                                          std::shared_ptr<Task>)>
-          val) {
-    maybe_run_immediately_callback_ = val;
+  TaskQueues* task_queues() const { return task_queues_; }
+  ExecutorOpts& set_task_queues(TaskQueues* val) {
+    task_queues_ = val;
     return *this;
   }
 
@@ -113,10 +105,7 @@ class ExecutorOpts {
   size_t thread_weight_{1};
   size_t worker_limit_{0};
   bool require_low_latency_{false};
-  ScalingThreadpool* threadpool_{nullptr};
-  std::function<std::shared_ptr<Task>(ScalingThreadpool*, ExecutorStats*,
-                                      std::shared_ptr<Task>)>
-      maybe_run_immediately_callback_{nullptr};
+  TaskQueues* task_queues_{nullptr};
 };
 
 class ExecutorImpl {
@@ -131,7 +120,7 @@ class ExecutorImpl {
   ExecutorImpl(Opts opts)
       : opts_(std::move(opts)),
         stats_(/*run_state_is_normal=*/!opts_.require_low_latency()) {
-    stats_.set_limit_running(opts_.thread_weight());
+    stats_.set_running_limit(opts_.thread_weight());
   }
 
   const Opts& opts() const { return opts_; }
@@ -150,10 +139,11 @@ class ExecutorImpl {
   ExecutorStats* stats() { return &stats_; }
 
  protected:
-  std::shared_ptr<Task> maybe_run_immediately(std::shared_ptr<Task> task);
+  std::shared_ptr<Task> maybe_execute_immediately(std::shared_ptr<Task> task);
 
  private:
   const Opts opts_;
+  TaskQueue executing_;
 
   ExecutorStats stats_;
 };

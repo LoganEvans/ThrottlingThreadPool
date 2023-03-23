@@ -83,9 +83,6 @@ class ScalingThreadpool {
   TaskQueues queues_;
 
   std::vector<std::unique_ptr<ExecutorImpl>> executors_;
-
-  std::shared_ptr<Task> maybe_run_immediately(ExecutorStats* stats,
-                                              std::shared_ptr<Task> task);
 };
 
 }  // namespace theta

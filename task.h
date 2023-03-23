@@ -128,9 +128,9 @@ class TaskQueue {
   // TODO(lpe): It would be nice to have a remove function that allowed for a
   // Task to removed from the center of a queue. The current workaround is to
   // allow a Task to be in a zombie state.
+  void reap_finished();
 
   void unblock_workers(size_t n);
-  void reap_finished();
 
  private:
   std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};

@@ -23,10 +23,6 @@ std::shared_ptr<Task> TaskQueue::pop_blocking() {
   return pop_impl();
 }
 
-void TaskQueue::unblock_workers(size_t n) {
-  sem_.release(n);
-}
-
 void TaskQueue::reap_finished() {
   std::unique_lock lock{shared_mutex_};
   reap_finished(lock);
@@ -36,6 +32,10 @@ void TaskQueue::reap_finished(const std::unique_lock<std::shared_mutex>&) {
   while (!queue_.empty() && queue_.front()->state() == Task::State::kFinished) {
     queue_.pop_front();
   }
+}
+
+void TaskQueue::unblock_workers(size_t n) {
+  sem_.release(n);
 }
 
 std::shared_ptr<Task> TaskQueue::pop_impl() {

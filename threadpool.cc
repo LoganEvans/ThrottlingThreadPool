@@ -22,15 +22,15 @@ ScalingThreadpool& ScalingThreadpool::getInstance() {
   return instance;
 }
 
-void ScalingThreadpool::configure(const ScalingThreadpool::ConfigureOpts& opts) {
+void ScalingThreadpool::configure(
+    const ScalingThreadpool::ConfigureOpts& opts) {
   shared_mutex_.lock();
   opts_ = opts;
   shared_mutex_.unlock();
 }
 
 Executor ScalingThreadpool::create(Executor::Opts opts) {
-  opts.set_threadpool(this).set_maybe_run_immediately_callback(
-      &ScalingThreadpool::maybe_run_immediately);
+  opts.set_task_queues(&queues_);
   std::unique_ptr<ExecutorImpl> impl;
   if (opts.priority_policy() == PriorityPolicy::FIFO) {
     impl = std::unique_ptr<FIFOExecutorImpl>(
@@ -71,21 +71,4 @@ ScalingThreadpool::ScalingThreadpool() {
         std::make_unique<Worker>(&queues_, TaskQueues::NicePriority::kRunning));
   }
 }
-
-std::shared_ptr<Task> ScalingThreadpool::maybe_run_immediately(
-    ExecutorStats* stats, std::shared_ptr<Task> task) {
-  if (stats->limit_running() > stats->num_running()) {
-    queues_
-        .queue(stats->run_state_is_normal()
-                   ? TaskQueues::NicePriority::kRunning
-                   : TaskQueues::NicePriority::kPrioritized)
-        ->push(std::move(task));
-    return nullptr;
-  }
-
-  return task;
-
-  // TODO(lpe): This needs to look at stats->limit_running or throttled, and
-  // then possibly wake up a worker to take care of this func.
-}
-}
+}  // namespace theta
