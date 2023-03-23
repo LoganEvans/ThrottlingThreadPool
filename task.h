@@ -1,9 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <memory>
-#include <queue>
 #include <semaphore>
 #include <shared_mutex>
 
@@ -136,7 +136,7 @@ class TaskQueue {
   // TODO(lpe): This needs to be lock-free. This mutex is for quick development
   // only.
   std::shared_mutex shared_mutex_;
-  std::queue<std::shared_ptr<Task>> queue_;
+  std::deque<std::shared_ptr<Task>> queue_;
 
   std::shared_ptr<Task> pop_impl();
 };

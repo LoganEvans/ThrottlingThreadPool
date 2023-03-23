@@ -6,7 +6,7 @@ namespace theta {
 void TaskQueue::push(std::shared_ptr<Task> task) {
   {
     std::unique_lock lock{shared_mutex_};
-    queue_.push(std::move(task));
+    queue_.push_back(std::move(task));
   }
 
   sem_.release();
@@ -34,7 +34,7 @@ std::shared_ptr<Task> TaskQueue::pop_impl() {
   std::unique_lock lock{shared_mutex_};
   if (!queue_.empty()) {
     task_ptr = std::move(queue_.front());
-    queue_.pop();
+    queue_.pop_front();
   }
 
   return task_ptr;
