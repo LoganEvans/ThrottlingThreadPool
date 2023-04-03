@@ -59,8 +59,12 @@ TEST(FIFOExecutor, saturate) {
   std::atomic<int> jobsRun{0};
 
   auto job = std::function<void()>([&]() {
-    std::lock_guard lock{jobMutex};
-    jobsRun.fetch_add(1, std::memory_order_acq_rel);
+    std::lock_guard l{jobMutex};
+    int jobs = 1 + jobsRun.fetch_add(1, std::memory_order_acq_rel);
+    if (jobs == kJobs) {
+      lock.unlock();
+      cv.notify_one();
+    }
   });
 
   jobMutex.lock();

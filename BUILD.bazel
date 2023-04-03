@@ -24,6 +24,7 @@ cc_library(
   name = "worker",
   srcs = ["worker.cc"],
   hdrs = [
+    "executor.h",
     "task.h",
     "worker.h",
   ],

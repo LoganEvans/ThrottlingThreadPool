@@ -19,7 +19,7 @@ class FIFOExecutorImpl : public ExecutorImpl {
   std::shared_ptr<Task> pop() override;
 
  private:
-  TaskQueue queue_;
+  TaskQueue queue_{NicePriority::kNone};
 };
 
 }  // namespace theta

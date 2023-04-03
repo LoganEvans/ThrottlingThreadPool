@@ -143,7 +143,7 @@ class ExecutorImpl {
 
  private:
   const Opts opts_;
-  TaskQueue executing_;
+  TaskQueue executing_{NicePriority::kNone};
 
   ExecutorStats stats_;
 };

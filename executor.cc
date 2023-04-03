@@ -57,14 +57,18 @@ std::shared_ptr<Task> ExecutorImpl::maybe_execute_immediately(
     std::shared_ptr<Task> task) {
   if (stats()->running_num() < stats()->running_limit()) {
     executing_.push(task);
-    opts().task_queues()->push(stats()->run_state_is_normal()
-                                   ? NicePriority::kRunning
-                                   : NicePriority::kPrioritized,
-                               std::move(task));
+    opts()
+        .task_queues()
+        ->queue(stats()->run_state_is_normal() ? NicePriority::kRunning
+                                               : NicePriority::kPrioritized)
+        ->push(std::move(task));
     return nullptr;
   } else if (stats()->throttled_num() < stats()->throttled_limit()) {
     executing_.push(task);
-    opts().task_queues()->push(NicePriority::kThrottled, std::move(task));
+    opts()
+        .task_queues()
+        ->queue(NicePriority::kThrottled)
+        ->push(std::move(task));
     return nullptr;
   }
 

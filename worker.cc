@@ -5,6 +5,8 @@
 #include <sched.h>
 #include <unistd.h>
 
+#include "executor.h"
+
 namespace theta {
 
 Worker::Worker(TaskQueues* queues, NicePriority priority)
@@ -42,23 +44,19 @@ void Worker::set_nice_priority(NicePriority priority) {
 }
 
 void Worker::run_loop() {
+  std::shared_ptr<Task> task{nullptr};
+
   while (true) {
-    auto priority = nice_priority();
-
-    auto task = queues_->pop_blocking(priority);
-
-    auto new_priority = nice_priority();
-    if (priority != new_priority) {
-      // TODO(lpe): This indicates that the thread needs to change its nice
-      // value. Afterward, the func should be requeued.
-      //CHECK(false);
+    if (!task) {
+      auto priority = nice_priority();
+      task = queues_->queue(priority)->pop_blocking();
     }
 
     if (shutdown_.load(std::memory_order_acquire)) {
       break;
     }
 
-    CHECK(*task);
+    CHECK(task);
     task->run();
 
     // TODO(lpe): After finishing a task, check to see if this worker needs to
@@ -66,7 +64,15 @@ void Worker::run_loop() {
     // workers at certain priority are out of balance due to a task being
     // throttled or promotted while running.
 
-    //auto newTask = task->opts().executor()->pop();
+    auto newTask = task->opts().executor()->pop();
+    task = nullptr;
+
+    if (newTask && queues_->queue(newTask->nice_priority())->is_empty()) {
+      task = newTask;
+      task->set_state(Task::nice2queued(task->nice_priority()));
+    } else if (newTask) {
+      queues_->push(newTask);
+    }
   }
 }
 

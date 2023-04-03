@@ -75,7 +75,8 @@ void Task::set_state(State state, const std::lock_guard<std::mutex>&) {
     opts().executor()->stats()->running_delta(-1);
     opts().executor()->stats()->finished_delta(1);
   } else {
-    CHECK(false);
+    CHECK(false) << "illegal state transition: " << int(old) << " -> "
+                 << int(state);
   }
 
   state_ = state;
@@ -98,25 +99,60 @@ void Task::set_nice_priority(NicePriority priority,
   // TODO(lpe): If there's a worker, possibly change the worker run state.
 }
 
+/*static*/
+Task::State Task::nice2queued(NicePriority priority) {
+  if (priority == NicePriority::kThrottled) {
+    return State::kQueuedThrottled;
+  } else if (priority == NicePriority::kRunning) {
+    return State::kQueuedNormal;
+  } else if (priority == NicePriority::kPrioritized) {
+    return State::kQueuedPrioritized;
+  }
+
+  CHECK(false) << "priority: " << int(priority);
+}
+
+/*static*/
+Task::State Task::nice2running(NicePriority priority) {
+  if (priority == NicePriority::kThrottled) {
+    return State::kRunningThrottled;
+  } else if (priority == NicePriority::kRunning) {
+    return State::kRunningNormal;
+  } else if (priority == NicePriority::kPrioritized) {
+    return State::kRunningPrioritized;
+  }
+
+  CHECK(false) << "priority: " << int(priority);
+}
+
+/*static*/
+Task::State Task::queued2running(Task::State state) {
+  if (state == State::kQueuedPrioritized) {
+    return State::kRunningPrioritized;
+  } else if (state == State::kQueuedThrottled) {
+    return State::kRunningThrottled;
+  } else if (state == State::kQueuedNormal) {
+    return State::kRunningNormal;
+  }
+
+  CHECK(false) << "state: " << int(state);
+}
+
 void Task::run() {
   {
     std::lock_guard lock{mutex_};
-
-    if (state_ == State::kQueuedThrottled) {
-      set_state(State::kRunningThrottled, lock);
-    } else if (state_ == State::kQueuedNormal) {
-      set_state(State::kRunningNormal, lock);
-    } else if (state_ == State::kQueuedPrioritized) {
-      set_state(State::kRunningPrioritized, lock);
-    } else {
-      CHECK(false) << "Previous state: " << int(state_);
-    }
+    set_state(queued2running(state_), lock);
   }
 
   opts().func()();
 }
 
 void TaskQueue::push(std::shared_ptr<Task> task) {
+  printf("> push(task[%d])], %d\n", task->state(), nice_priority());
+  if (nice_priority() != NicePriority::kNone) {
+    task->set_state(Task::nice2queued(nice_priority()));
+  }
+
   {
     std::unique_lock lock{shared_mutex_};
     queue_.push_back(std::move(task));
@@ -150,6 +186,11 @@ void TaskQueue::reap_finished(const std::unique_lock<std::shared_mutex>&) {
 
 void TaskQueue::unblock_workers(size_t n) { sem_.release(n); }
 
+bool TaskQueue::is_empty() const {
+  std::lock_guard lock{shared_mutex_};
+  return queue_.empty();
+}
+
 std::shared_ptr<Task> TaskQueue::pop_impl() {
   std::unique_lock lock{shared_mutex_};
   reap_finished(lock);
@@ -174,8 +215,8 @@ TaskQueue* TaskQueues::queue(NicePriority priority) {
   }
 }
 
-void TaskQueues::push(NicePriority priority, std::shared_ptr<Task> task) {
-  switch (priority) {
+void TaskQueues::push(std::shared_ptr<Task> task) {
+  switch (task->nice_priority()) {
     case NicePriority::kThrottled:
       task->set_state(Task::State::kQueuedThrottled);
       break;
@@ -186,10 +227,8 @@ void TaskQueues::push(NicePriority priority, std::shared_ptr<Task> task) {
       task->set_state(Task::State::kQueuedPrioritized);
       break;
   }
-  queue(priority)->push(std::move(task));
+
+  queue(task->nice_priority())->push(std::move(task));
 }
 
-std::shared_ptr<Task> TaskQueues::pop_blocking(NicePriority priority) {
-  return queue(priority)->pop_blocking();
-}
 }  // namespace theta

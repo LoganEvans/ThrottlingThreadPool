@@ -13,9 +13,10 @@ class ExecutorImpl;
 class Worker;
 
 enum class NicePriority {
-  kThrottled,
-  kRunning,
-  kPrioritized,
+  kNone = -1,
+  kThrottled = 1,
+  kRunning = 2,
+  kPrioritized = 3,
 };
 
 // A task wraps a Func with information about scheduling.
@@ -98,7 +99,7 @@ class Task {
   };
 
   enum class State {
-    kCreated = 0,
+    kCreated = -1,
     kQueuedExecutor = 1,
     kQueuedPrioritized = 2,
     kQueuedThrottled = 3,
@@ -120,6 +121,10 @@ class Task {
   NicePriority nice_priority() const;
   void set_nice_priority(NicePriority priority);
 
+  static State nice2queued(NicePriority priority);
+  static State nice2running(NicePriority priority);
+  static State queued2running(State state);
+
  private:
   Opts opts_;
   mutable std::mutex mutex_;
@@ -136,6 +141,8 @@ class TaskQueue {
  public:
   using Func = Task::Func;
 
+  TaskQueue(NicePriority nice_priority) : nice_priority_(nice_priority) {}
+
   void push(std::shared_ptr<Task> task);
   std::shared_ptr<Task> pop();
   std::shared_ptr<Task> pop_blocking();
@@ -147,12 +154,18 @@ class TaskQueue {
 
   void unblock_workers(size_t n);
 
+  bool is_empty() const;
+
+  NicePriority nice_priority() const { return nice_priority_; }
+
  private:
+  const NicePriority nice_priority_;
+
   std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
 
   // TODO(lpe): This needs to be lock-free. This mutex is for quick development
   // only.
-  std::shared_mutex shared_mutex_;
+  mutable std::shared_mutex shared_mutex_;
   std::deque<std::shared_ptr<Task>> queue_;
 
   std::shared_ptr<Task> pop_impl();
@@ -163,13 +176,12 @@ class TaskQueues {
  public:
   TaskQueue* queue(NicePriority priority);
 
-  void push(NicePriority priority, std::shared_ptr<Task> task);
-  std::shared_ptr<Task> pop_blocking(NicePriority priority);
+  void push(std::shared_ptr<Task> task);
 
  private:
-  TaskQueue throttled_queue_;
-  TaskQueue running_queue_;
-  TaskQueue prioritized_queue_;
+  TaskQueue throttled_queue_{NicePriority::kThrottled};
+  TaskQueue running_queue_{NicePriority::kRunning};
+  TaskQueue prioritized_queue_{NicePriority::kPrioritized};
 };
 
 }  // namespace theta
