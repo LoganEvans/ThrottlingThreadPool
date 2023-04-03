@@ -8,9 +8,13 @@ COPTS = ["-std=c++20"]
 cc_library(
   name = "task",
   srcs = ["task.cc"],
-  hdrs = ["task.h"],
+  hdrs = [
+    "executor.h",
+    "task.h",
+  ],
   deps = [
     "@com_google_glog//:glog",
+    ":worker",
   ],
   copts = COPTS,
   linkopts = ["-lpthread"],
@@ -19,10 +23,12 @@ cc_library(
 cc_library(
   name = "worker",
   srcs = ["worker.cc"],
-  hdrs = ["worker.h"],
+  hdrs = [
+    "task.h",
+    "worker.h",
+  ],
   deps = [
     "@com_google_glog//:glog",
-    ":task",
   ],
   copts = COPTS,
   linkopts = ["-lpthread"],

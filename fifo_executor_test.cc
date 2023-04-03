@@ -46,4 +46,35 @@ TEST(FIFOExecutor, post) {
   EXPECT_TRUE(jobRan.load(std::memory_order_acquire));
 }
 
+TEST(FIFOExecutor, saturate) {
+  static constexpr int kJobs = 10;
+
+  std::condition_variable cv;
+  std::mutex mu;
+
+  Executor executor = ScalingThreadpool::getInstance().create(Executor::Opts{});
+
+  std::unique_lock<std::mutex> lock{mu};
+  std::mutex jobMutex;
+  std::atomic<int> jobsRun{0};
+
+  auto job = std::function<void()>([&]() {
+    std::lock_guard lock{jobMutex};
+    jobsRun.fetch_add(1, std::memory_order_acq_rel);
+  });
+
+  jobMutex.lock();
+  for (int i = 0; i < kJobs; i++) {
+    executor.post(job);
+  }
+  auto now = Executor::Clock::now();
+  jobMutex.unlock();
+
+  cv.wait_until(lock, now + 1s, [&]() {
+    return jobsRun.load(std::memory_order_acquire) == kJobs;
+  });
+
+  EXPECT_EQ(jobsRun.load(std::memory_order_acquire), kJobs);
+}
+
 }  // namespace theta

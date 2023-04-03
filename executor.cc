@@ -13,28 +13,28 @@ int ExecutorStats::running_num() const {
   return running_num_.load(std::memory_order_relaxed);
 }
 void ExecutorStats::running_delta(int val) {
-  running_num_.fetch_add(val, std::memory_order_release);
+  running_num_.fetch_add(val, std::memory_order_acq_rel);
 }
 
 int ExecutorStats::waiting_num() const {
   return waiting_num_.load(std::memory_order_relaxed);
 }
 void ExecutorStats::waiting_delta(int val) {
-  waiting_num_.fetch_add(val, std::memory_order_release);
+  waiting_num_.fetch_add(val, std::memory_order_acq_rel);
 }
 
 int ExecutorStats::throttled_num() const {
   return throttled_num_.load(std::memory_order_relaxed);
 }
 void ExecutorStats::throttled_delta(int val) {
-  throttled_num_.fetch_add(val, std::memory_order_release);
+  throttled_num_.fetch_add(val, std::memory_order_acq_rel);
 }
 
 int ExecutorStats::finished_num() const {
   return finished_num_.load(std::memory_order_relaxed);
 }
 void ExecutorStats::finished_delta(int val) {
-  finished_num_.fetch_add(val, std::memory_order_release);
+  finished_num_.fetch_add(val, std::memory_order_acq_rel);
 }
 
 int ExecutorStats::running_limit() const {
@@ -56,22 +56,15 @@ Executor::Executor(ExecutorImpl* impl) : impl_(impl) {}
 std::shared_ptr<Task> ExecutorImpl::maybe_execute_immediately(
     std::shared_ptr<Task> task) {
   if (stats()->running_num() < stats()->running_limit()) {
-    stats()->running_delta(1);
     executing_.push(task);
-    opts()
-        .task_queues()
-        ->queue(stats()->run_state_is_normal()
-                    ? TaskQueues::NicePriority::kRunning
-                    : TaskQueues::NicePriority::kPrioritized)
-        ->push(std::move(task));
+    opts().task_queues()->push(stats()->run_state_is_normal()
+                                   ? NicePriority::kRunning
+                                   : NicePriority::kPrioritized,
+                               std::move(task));
     return nullptr;
   } else if (stats()->throttled_num() < stats()->throttled_limit()) {
-    stats()->throttled_delta(1);
     executing_.push(task);
-    opts()
-        .task_queues()
-        ->queue(TaskQueues::NicePriority::kThrottled)
-        ->push(std::move(task));
+    opts().task_queues()->push(NicePriority::kThrottled, std::move(task));
     return nullptr;
   }
 

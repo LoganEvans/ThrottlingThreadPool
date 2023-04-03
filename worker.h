@@ -8,22 +8,21 @@
 namespace theta {
 
 class ScalingThreadpool;
+class Task;
 
 class Worker {
  public:
-  using Func = Task::Func;
-
-  Worker(TaskQueues* queues, TaskQueues::NicePriority priority);
+  Worker(TaskQueues* queues, NicePriority priority);
   ~Worker();
 
   void shutdown();
 
-  TaskQueues::NicePriority nice_priority() const;
-  void set_nice_priority(TaskQueues::NicePriority priority);
+  NicePriority nice_priority() const;
+  void set_nice_priority(NicePriority priority);
 
  private:
   TaskQueues* queues_;
-  std::atomic<TaskQueues::NicePriority> priority_;
+  std::atomic<NicePriority> priority_;
   std::thread thread_;
   std::atomic<bool> shutdown_{false};
 

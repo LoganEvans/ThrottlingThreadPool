@@ -7,7 +7,7 @@
 
 namespace theta {
 
-Worker::Worker(TaskQueues* queues, TaskQueues::NicePriority priority)
+Worker::Worker(TaskQueues* queues, NicePriority priority)
     : queues_(queues), thread_(&Worker::run_loop, this) {
   set_nice_priority(priority);
 }
@@ -16,21 +16,21 @@ Worker::~Worker() { thread_.join(); }
 
 void Worker::shutdown() { shutdown_.store(true, std::memory_order_release); }
 
-TaskQueues::NicePriority Worker::nice_priority() const {
+NicePriority Worker::nice_priority() const {
   return priority_.load(std::memory_order_acquire);
 }
 
-void Worker::set_nice_priority(TaskQueues::NicePriority priority) {
+void Worker::set_nice_priority(NicePriority priority) {
   static int sched_policy = sched_getscheduler(getpid());
 
   priority_.store(priority, std::memory_order_release);
 
   sched_param param;
   switch (priority) {
-    case TaskQueues::NicePriority::kThrottled:
+    case NicePriority::kThrottled:
       param.sched_priority = -20;
       break;
-    case TaskQueues::NicePriority::kPrioritized:
+    case NicePriority::kPrioritized:
       param.sched_priority = 19;
       break;
     default:
@@ -44,13 +44,14 @@ void Worker::set_nice_priority(TaskQueues::NicePriority priority) {
 void Worker::run_loop() {
   while (true) {
     auto priority = nice_priority();
+
     auto task = queues_->pop_blocking(priority);
 
     auto new_priority = nice_priority();
     if (priority != new_priority) {
       // TODO(lpe): This indicates that the thread needs to change its nice
       // value. Afterward, the func should be requeued.
-      CHECK(false);
+      //CHECK(false);
     }
 
     if (shutdown_.load(std::memory_order_acquire)) {
@@ -58,7 +59,14 @@ void Worker::run_loop() {
     }
 
     CHECK(*task);
-    task->opts().func()();
+    task->run();
+
+    // TODO(lpe): After finishing a task, check to see if this worker needs to
+    // convert to another priority level. That will happen when the number of
+    // workers at certain priority are out of balance due to a task being
+    // throttled or promotted while running.
+
+    //auto newTask = task->opts().executor()->pop();
   }
 }
 

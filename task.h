@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -12,6 +11,12 @@ namespace theta {
 
 class ExecutorImpl;
 class Worker;
+
+enum class NicePriority {
+  kThrottled,
+  kRunning,
+  kPrioritized,
+};
 
 // A task wraps a Func with information about scheduling.
 //
@@ -26,11 +31,11 @@ class Worker;
 //               |  |                 ^                        ^              |
 //               |  |       0         |                        |              |
 //               |  |       |         |                        |              |
-//               |  |       v         |                        v              |
+//               |  |       v         v                        v              |
 //               |  |     +---------------------+   +----------------------+  |
 //               |  +---->| queued(throttled)   |-->| running(throttled)   |--+
 //               |        +---------------------+   +----------------------+  |
-//               |                    |                        ^              |
+//               |                    ^                        ^              |
 //               |          0         |                        |              |
 //               |          |         |                        |              |
 //               |          v         v                        v              |
@@ -61,6 +66,8 @@ class Worker;
 // running/prioritized state.
 //
 class Task {
+  friend class Worker;
+
  public:
   using Func = std::function<void()>;
 
@@ -91,15 +98,15 @@ class Task {
   };
 
   enum class State {
-    kCreated,
-    kQueuedExecutor,
-    kQueuedPrioritized,
-    kQueuedThrottled,
-    kQueuedNormal,
-    kRunningPrioritized,
-    kRunningThrottled,
-    kRunningNormal,
-    kFinished,
+    kCreated = 0,
+    kQueuedExecutor = 1,
+    kQueuedPrioritized = 2,
+    kQueuedThrottled = 3,
+    kQueuedNormal = 4,
+    kRunningPrioritized = 5,
+    kRunningThrottled = 6,
+    kRunningNormal = 7,
+    kFinished = 8,
   };
 
   Task(Opts opts) : opts_(opts) {}
@@ -107,14 +114,22 @@ class Task {
   const Opts& opts() const { return opts_; }
   operator bool() const { return opts().func() != nullptr; }
 
-  State state() const { return state_.load(std::memory_order_acquire); }
-  void set_state(State state) {
-    state_.store(state, std::memory_order_release);
-  }
+  State state() const;
+  void set_state(State state);
+
+  NicePriority nice_priority() const;
+  void set_nice_priority(NicePriority priority);
 
  private:
   Opts opts_;
-  std::atomic<State> state_{State::kCreated};
+  mutable std::mutex mutex_;
+  State state_{State::kCreated};
+  NicePriority nice_priority_{NicePriority::kRunning};
+
+  void set_state(State state, const std::lock_guard<std::mutex>&);
+  void set_nice_priority(NicePriority priority,
+                         const std::lock_guard<std::mutex>&);
+  void run();
 };
 
 class TaskQueue {
@@ -146,12 +161,6 @@ class TaskQueue {
 
 class TaskQueues {
  public:
-  enum class NicePriority {
-    kThrottled,
-    kRunning,
-    kPrioritized,
-  };
-
   TaskQueue* queue(NicePriority priority);
 
   void push(NicePriority priority, std::shared_ptr<Task> task);

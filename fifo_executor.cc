@@ -12,13 +12,13 @@ void FIFOExecutorImpl::post(Executor::Func func) {
 
   task = maybe_execute_immediately(std::move(task));
   if (task) {
+    task->set_state(Task::State::kQueuedExecutor);
     queue_.push(std::move(task));
   }
 }
 
 std::shared_ptr<Task> FIFOExecutorImpl::pop() {
   printf("> FIFOExecutorImpl::pop()\n");
-
   return queue_.pop();
 }
 

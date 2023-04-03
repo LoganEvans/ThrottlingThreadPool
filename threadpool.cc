@@ -54,9 +54,9 @@ ScalingThreadpool::~ScalingThreadpool() {
     worker->shutdown();
   }
 
-  for (auto prio : std::to_array({TaskQueues::NicePriority::kThrottled,
-                                  TaskQueues::NicePriority::kRunning,
-                                  TaskQueues::NicePriority::kPrioritized})) {
+  for (auto prio : std::to_array({NicePriority::kThrottled,
+                                  NicePriority::kRunning,
+                                  NicePriority::kPrioritized})) {
     queues_.queue(prio)->unblock_workers(workers_.size());
   }
 }
@@ -68,7 +68,7 @@ ScalingThreadpool::ScalingThreadpool() {
   workers_.reserve(opts_.thread_limit());
   for (size_t i = 0; i < opts_.thread_limit(); i++) {
     workers_.push_back(
-        std::make_unique<Worker>(&queues_, TaskQueues::NicePriority::kRunning));
+        std::make_unique<Worker>(&queues_, NicePriority::kRunning));
   }
 }
 }  // namespace theta
