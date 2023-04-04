@@ -40,7 +40,11 @@ void Worker::set_nice_priority(NicePriority priority) {
       break;
   }
 
-  pthread_setschedparam(thread_.native_handle(), sched_policy, &param);
+  pthread_setschedparam(get_pthread(), sched_policy, &param);
+}
+
+pthread_t Worker::get_pthread() {
+  return thread_.native_handle();
 }
 
 void Worker::run_loop() {

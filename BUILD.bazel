@@ -16,7 +16,7 @@ cc_library(
     "@com_google_glog//:glog",
     ":worker",
   ],
-  copts = COPTS,
+  copts = COPTS + ["-D_GNU_SOURCE"],
   linkopts = ["-lpthread"],
 )
 

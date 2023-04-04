@@ -1,5 +1,13 @@
 #pragma once
 
+#ifndef _GNU_SOURCE
+// _GNU_SOURCE is required for getrusage.
+static_assert(false);
+#endif
+
+#include <sys/resource.h>
+#include <sys/time.h>
+
 #include <deque>
 #include <functional>
 #include <memory>
@@ -86,16 +94,9 @@ class Task {
       return *this;
     }
 
-    Worker* worker() const { return worker_; }
-    Opts& set_worker(Worker* val) {
-      worker_ = val;
-      return *this;
-    }
-
    private:
     Func func_{nullptr};
     ExecutorImpl* executor_{nullptr};
-    Worker* worker_{nullptr};
   };
 
   enum class State {
@@ -110,6 +111,10 @@ class Task {
     kFinished = 8,
   };
 
+  static State nice2queued(NicePriority priority);
+  static State nice2running(NicePriority priority);
+  static State queued2running(State state);
+
   Task(Opts opts) : opts_(opts) {}
 
   const Opts& opts() const { return opts_; }
@@ -121,15 +126,17 @@ class Task {
   NicePriority nice_priority() const;
   void set_nice_priority(NicePriority priority);
 
-  static State nice2queued(NicePriority priority);
-  static State nice2running(NicePriority priority);
-  static State queued2running(State state);
+  Worker* worker() const { return worker_; }
+  void set_worker(Worker* val) { worker_ = val; }
 
  private:
   Opts opts_;
   mutable std::mutex mutex_;
+  rusage begin_ru_;
+  timeval begin_tv_;
   State state_{State::kCreated};
   NicePriority nice_priority_{NicePriority::kRunning};
+  Worker* worker_{nullptr};
 
   void set_state(State state, const std::lock_guard<std::mutex>&);
   void set_nice_priority(NicePriority priority,

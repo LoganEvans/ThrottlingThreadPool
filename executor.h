@@ -1,5 +1,13 @@
 #pragma once
 
+#ifndef _GNU_SOURCE
+// _GNU_SOURCE is required for getrusage.
+static_assert(false);
+#endif
+
+#include <sys/resource.h>
+#include <sys/time.h>
+
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -51,7 +59,14 @@ class ExecutorStats {
   int throttled_limit() const;
   void set_throttled_limit(int val);
 
+  double ema_usage_proportion() const;
+  void update_ema_usage_proportion(struct rusage* begin_ru,
+                                   struct timeval* begin_tv,
+                                   struct rusage* end_ru,
+                                   struct timeval* end_tv);
+
  private:
+  static constexpr double tau_ = 1.0;
   const bool run_state_is_normal_;
 
   std::atomic<int> running_num_{0};
@@ -61,6 +76,8 @@ class ExecutorStats {
 
   std::atomic<int> running_limit_{0};
   std::atomic<int> throttled_limit_{0};
+
+  std::atomic<double> ema_usage_proportion_{1.0};
 };
 
 class ExecutorOpts {
@@ -115,6 +132,8 @@ class ExecutorImpl {
   using Func = Task::Func;
   using Opts = ExecutorOpts;
   using Clock = std::chrono::high_resolution_clock;
+
+  static void get_tv(timeval* tv);
 
   virtual ~ExecutorImpl() {}
   ExecutorImpl(Opts opts)

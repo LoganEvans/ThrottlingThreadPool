@@ -19,6 +19,7 @@ class Worker {
 
   NicePriority nice_priority() const;
   void set_nice_priority(NicePriority priority);
+  pthread_t get_pthread();
 
  private:
   TaskQueues* queues_;
