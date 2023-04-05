@@ -75,6 +75,7 @@ enum class NicePriority {
 // running/prioritized state.
 //
 class Task {
+  friend class ExecutorImpl;
   friend class Worker;
 
  public:
@@ -114,6 +115,7 @@ class Task {
   static State nice2queued(NicePriority priority);
   static State nice2running(NicePriority priority);
   static State queued2running(State state);
+  static bool is_running_state(Task::State state);
 
   Task(Opts opts) : opts_(opts) {}
 
@@ -138,6 +140,7 @@ class Task {
   NicePriority nice_priority_{NicePriority::kRunning};
   Worker* worker_{nullptr};
 
+  State state(const std::lock_guard<std::mutex>&) const;
   void set_state(State state, const std::lock_guard<std::mutex>&);
   void set_nice_priority(NicePriority priority,
                          const std::lock_guard<std::mutex>&);
@@ -151,8 +154,12 @@ class TaskQueue {
   TaskQueue(NicePriority nice_priority) : nice_priority_(nice_priority) {}
 
   void push(std::shared_ptr<Task> task);
-  std::shared_ptr<Task> pop();
-  std::shared_ptr<Task> pop_blocking();
+  void push_front(std::shared_ptr<Task> task);
+
+  std::shared_ptr<Task> maybe_pop();
+  std::shared_ptr<Task> wait_pop();
+
+  std::shared_ptr<Task> maybe_pop_back();
 
   // TODO(lpe): It would be nice to have a remove function that allowed for a
   // Task to removed from the center of a queue. The current workaround is to
@@ -165,7 +172,7 @@ class TaskQueue {
 
   NicePriority nice_priority() const { return nice_priority_; }
 
- private:
+ //private:
   const NicePriority nice_priority_;
 
   std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
@@ -177,6 +184,7 @@ class TaskQueue {
 
   std::shared_ptr<Task> pop_impl();
   void reap_finished(const std::unique_lock<std::shared_mutex>&);
+  void reap_finished_back(const std::unique_lock<std::shared_mutex>&);
 };
 
 class TaskQueues {

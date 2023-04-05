@@ -46,13 +46,6 @@ void ExecutorStats::set_running_limit(int val) {
   running_limit_.store(val, std::memory_order_relaxed);
 }
 
-int ExecutorStats::throttled_limit() const {
-  return throttled_limit_.load(std::memory_order_relaxed);
-}
-void ExecutorStats::set_throttled_limit(int val) {
-  throttled_limit_.store(val, std::memory_order_relaxed);
-}
-
 double ExecutorStats::ema_usage_proportion() const {
   return ema_usage_proportion_.load(std::memory_order_relaxed);
 }
@@ -81,8 +74,6 @@ void ExecutorStats::update_ema_usage_proportion(struct rusage* begin_ru,
       expected, desired, std::memory_order_release, std::memory_order_relaxed));
 }
 
-Executor::Executor(ExecutorImpl* impl) : impl_(impl) {}
-
 /*static*/
 void ExecutorImpl::get_tv(timeval* tv) {
   auto tp = Clock::now();
@@ -93,26 +84,79 @@ void ExecutorImpl::get_tv(timeval* tv) {
   tv->tv_usec = usecs.count();
 }
 
-std::shared_ptr<Task> ExecutorImpl::maybe_execute_immediately(
-    std::shared_ptr<Task> task) {
-  if (stats()->running_num() < stats()->running_limit()) {
-    executing_.push(task);
-    opts()
-        .task_queues()
-        ->queue(stats()->run_state_is_normal() ? NicePriority::kRunning
-                                               : NicePriority::kPrioritized)
-        ->push(std::move(task));
-    return nullptr;
-  } else if (stats()->throttled_num() < stats()->throttled_limit()) {
-    executing_.push(task);
-    opts()
-        .task_queues()
-        ->queue(NicePriority::kThrottled)
-        ->push(std::move(task));
-    return nullptr;
+void ExecutorImpl::refill_queues() {
+  static std::mutex mu;
+  std::lock_guard l{mu};
+
+  int running_limit = stats()->running_limit();
+  int running_num = stats()->running_num();
+
+  // Throttle a running task
+  for (; running_num > running_limit; running_num--) {
+    auto task = executing_.maybe_pop_back();
+    if (!task) {
+      executing_.push(std::move(task));
+      break;
+    }
+    task->set_state(Task::State::kRunningThrottled);
+    throttled_.push_front(std::move(task));
   }
 
-  return task;
+  auto normal_queue = opts().task_queues()->queue(NicePriority::kRunning);
+
+  // Unthrottle a running task
+  for (; running_num < running_limit; running_num++) {
+    auto task = throttled_.maybe_pop();
+    if (!task) {
+      break;
+    }
+    {
+      bool unthrottled = false;
+      {
+        std::lock_guard lock{task->mutex_};
+        if (task->state(lock) == Task::State::kRunningThrottled) {
+          task->set_state(Task::State::kRunningNormal, lock);
+          unthrottled = true;
+        }
+      }
+
+      if (!unthrottled) {
+        normal_queue->push(task);
+      }
+    }
+    executing_.push(std::move(task));
+  }
+
+  // Queue more tasks to run normally
+  for (; running_num < running_limit; running_num++) {
+    auto task = maybe_pop();
+    if (!task) {
+      return;
+    }
+    executing_.push(task);
+    normal_queue->push(std::move(task));
+  }
+
+  // Queue more tasks to run throttled
+  int throttled_limit = throttled_worker_limit();
+  auto throttled_queue = opts().task_queues()->queue(NicePriority::kThrottled);
+  for (int throttled_num = stats()->throttled_num();
+       throttled_num < throttled_limit; throttled_num++) {
+    auto task = maybe_pop();
+    if (!task) {
+      return;
+    }
+    throttled_.push(task);
+    throttled_queue->push(std::move(task));
+  }
 }
+
+int ExecutorImpl::throttled_worker_limit() const {
+  int conc = std::thread::hardware_concurrency();
+  return std::min(8 * conc,
+                  static_cast<int>(conc / stats()->ema_usage_proportion()));
+}
+
+Executor::Executor(ExecutorImpl* impl) : impl_(impl) {}
 
 }  // namespace theta

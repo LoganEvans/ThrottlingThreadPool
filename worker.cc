@@ -51,10 +51,8 @@ void Worker::run_loop() {
   std::shared_ptr<Task> task{nullptr};
 
   while (true) {
-    if (!task) {
-      auto priority = nice_priority();
-      task = queues_->queue(priority)->pop_blocking();
-    }
+    auto priority = nice_priority();
+    task = queues_->queue(priority)->wait_pop();
 
     if (shutdown_.load(std::memory_order_acquire)) {
       break;
@@ -68,15 +66,8 @@ void Worker::run_loop() {
     // workers at certain priority are out of balance due to a task being
     // throttled or promotted while running.
 
-    auto newTask = task->opts().executor()->pop();
-    task = nullptr;
-
-    if (newTask && queues_->queue(newTask->nice_priority())->is_empty()) {
-      task = newTask;
-      task->set_state(Task::nice2queued(task->nice_priority()));
-    } else if (newTask) {
-      queues_->push(newTask);
-    }
+    // TODO(lpe): Set high priority for refilling the queues?
+    task->opts().executor()->refill_queues();
   }
 }
 

@@ -34,6 +34,11 @@ Task::State Task::nice2running(NicePriority priority) {
 
 /*static*/
 Task::State Task::queued2running(Task::State state) {
+  // TODO(lpe): Add an "wanted running state" because tasks can be in the
+  // wrong queue (because a throttling/unthrottling event occured), but can't be
+  // removed. That means it's possible for a task to be popped from the
+  // throttled queue even though it will need to run with normal priority.
+  // That sholud obviate the need for this function.
   if (state == State::kQueuedPrioritized) {
     return State::kRunningPrioritized;
   } else if (state == State::kQueuedThrottled) {
@@ -45,8 +50,21 @@ Task::State Task::queued2running(Task::State state) {
   CHECK(false) << "state: " << int(state);
 }
 
+/*static*/
+bool Task::is_running_state(Task::State state) {
+  if (state == State::kRunningPrioritized ||
+      state == State::kRunningThrottled || state == State::kRunningNormal) {
+    return true;
+  }
+  return false;
+}
+
 Task::State Task::state() const {
   std::lock_guard lock{mutex_};
+  return state(lock);
+}
+
+Task::State Task::state(const std::lock_guard<std::mutex>&) const {
   return state_;
 }
 
@@ -58,7 +76,6 @@ void Task::set_state(State state) {
 void Task::set_state(State state, const std::lock_guard<std::mutex>&) {
   State old = state_;
   state_ = state;
-  printf("> set_state() %d -> %d\n", old, state);
   auto* executor = opts().executor();
   auto* stats = executor->stats();
 
@@ -159,6 +176,14 @@ void Task::set_nice_priority(NicePriority priority,
 }
 
 void Task::run() {
+  if (is_running_state(state())) {
+    // TODO(lpe): This happens because of how the queues are implemented. A task
+    // can end up in both the normal and the throttled queue at the same time
+    // because there's currently no way to remove a task from the middle of a
+    // queue.
+    return;
+  }
+
   {
     std::lock_guard lock{mutex_};
     set_state(queued2running(state_), lock);
@@ -169,7 +194,8 @@ void Task::run() {
 }
 
 void TaskQueue::push(std::shared_ptr<Task> task) {
-  printf("> push(task[%d])], %d\n", task->state(), nice_priority());
+  DCHECK(task);
+
   if (nice_priority() != NicePriority::kNone) {
     task->set_state(Task::nice2queued(nice_priority()));
   }
@@ -182,16 +208,48 @@ void TaskQueue::push(std::shared_ptr<Task> task) {
   sem_.release();
 }
 
-std::shared_ptr<Task> TaskQueue::pop() {
+void TaskQueue::push_front(std::shared_ptr<Task> task) {
+  DCHECK(task);
+
+  if (nice_priority() != NicePriority::kNone) {
+    task->set_state(Task::nice2queued(nice_priority()));
+  }
+
+  {
+    std::unique_lock lock{shared_mutex_};
+    queue_.push_front(std::move(task));
+  }
+
+  sem_.release();
+}
+
+std::shared_ptr<Task> TaskQueue::maybe_pop() {
   if (!sem_.try_acquire()) {
     return nullptr;
   }
   return pop_impl();
 }
 
-std::shared_ptr<Task> TaskQueue::pop_blocking() {
+std::shared_ptr<Task> TaskQueue::wait_pop() {
   sem_.acquire();
   return pop_impl();
+}
+
+std::shared_ptr<Task> TaskQueue::maybe_pop_back() {
+  if (!sem_.try_acquire()) {
+    return nullptr;
+  }
+
+  std::unique_lock lock{shared_mutex_};
+  reap_finished_back(lock);
+
+  if (!queue_.empty()) {
+    auto task = std::move(queue_.back());
+    queue_.pop_back();
+    return task;
+  }
+
+  return nullptr;
 }
 
 void TaskQueue::reap_finished() {
@@ -202,6 +260,12 @@ void TaskQueue::reap_finished() {
 void TaskQueue::reap_finished(const std::unique_lock<std::shared_mutex>&) {
   while (!queue_.empty() && queue_.front()->state() == Task::State::kFinished) {
     queue_.pop_front();
+  }
+}
+
+void TaskQueue::reap_finished_back(const std::unique_lock<std::shared_mutex>&) {
+  while (!queue_.empty() && queue_.back()->state() == Task::State::kFinished) {
+    queue_.pop_back();
   }
 }
 
@@ -217,9 +281,9 @@ std::shared_ptr<Task> TaskQueue::pop_impl() {
   reap_finished(lock);
 
   if (!queue_.empty()) {
-    auto task_ptr = std::move(queue_.front());
+    auto task = std::move(queue_.front());
     queue_.pop_front();
-    return task_ptr;
+    return task;
   }
 
   return nullptr;

@@ -56,9 +56,6 @@ class ExecutorStats {
   int running_limit() const;
   void set_running_limit(int val);
 
-  int throttled_limit() const;
-  void set_throttled_limit(int val);
-
   double ema_usage_proportion() const;
   void update_ema_usage_proportion(struct rusage* begin_ru,
                                    struct timeval* begin_tv,
@@ -75,7 +72,6 @@ class ExecutorStats {
   std::atomic<int> finished_num_{0};
 
   std::atomic<int> running_limit_{0};
-  std::atomic<int> throttled_limit_{0};
 
   std::atomic<double> ema_usage_proportion_{1.0};
 };
@@ -127,6 +123,7 @@ class ExecutorOpts {
 
 class ExecutorImpl {
   friend class ScalingThreadpool;
+  friend class Worker;
 
  public:
   using Func = Task::Func;
@@ -153,18 +150,22 @@ class ExecutorImpl {
     throw NotImplemented{};
   }
 
-  virtual std::shared_ptr<Task> pop() = 0;
+  virtual std::shared_ptr<Task> maybe_pop() = 0;
 
   ExecutorStats* stats() { return &stats_; }
+  const ExecutorStats* stats() const { return &stats_; }
 
  protected:
-  std::shared_ptr<Task> maybe_execute_immediately(std::shared_ptr<Task> task);
+  void refill_queues();
 
  private:
   const Opts opts_;
   TaskQueue executing_{NicePriority::kNone};
+  TaskQueue throttled_{NicePriority::kNone};
 
   ExecutorStats stats_;
+
+  int throttled_worker_limit() const;
 };
 
 class Executor {

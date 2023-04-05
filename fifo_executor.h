@@ -16,7 +16,7 @@ class FIFOExecutorImpl : public ExecutorImpl {
   FIFOExecutorImpl(const Executor::Opts& opts) : ExecutorImpl(opts) {}
 
  protected:
-  std::shared_ptr<Task> pop() override;
+  std::shared_ptr<Task> maybe_pop() override;
 
  private:
   TaskQueue queue_{NicePriority::kNone};
