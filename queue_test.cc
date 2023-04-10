@@ -11,8 +11,9 @@
 namespace theta {
 
 TEST(Queue, ctor) {
-  Queue<int>::Link foo{4};
-  EXPECT_EQ(foo.get(), 4);
+  int v{5};
+  Queue<int>::Link foo{&v};
+  EXPECT_EQ(foo.get(), &v);
 }
 
 }  // namespace theta
