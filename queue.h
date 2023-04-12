@@ -19,8 +19,7 @@ class Link {
   static bool is_dirty(Link* link) { return link == dirty(link); }
 
  public:
-  template <typename... Args>
-  Link(T* t) : t_(t) {}
+  Link(T* t = nullptr) : t_(t) {}
 
   T* get() const { return t_; }
 
@@ -215,11 +214,18 @@ class Queue {
  public:
   using Link = Link<T>;
 
-  void push_back(Link* val);
-  void push_front(Link* val);
+  Queue() { head_.push_head(tail_); }
 
-  Link* maybe_pop_back();
-  Link* maybe_pop_front();
+  void push_back(T* val) { tail_.push_tail(new Link{val}); }
+
+  void push_front(Link* val) { head_.push_head(new Link{val}); }
+
+  //T* maybe_pop_back() {
+  //  Link* link = tail_.
+  //  T* val = 
+  //}
+
+  T* maybe_pop_front();
 
   Link* wait_pop_back();
   Link* wait_pop_front();
@@ -231,6 +237,6 @@ class Queue {
   // development process.
   std::mutex dev_mutex_;
 
-  Link* head_;
-  Link* tail_;
+  Link head_;
+  Link tail_;
 };
