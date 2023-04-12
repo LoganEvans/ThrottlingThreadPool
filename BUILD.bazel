@@ -3,8 +3,18 @@ package(default_visibility = ["//visibility:public"])
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make", "cmake")
 
 COPTS = ["-std=c++20", "-D_GNU_SOURCE"]
+
+configure_make(
+    name = "librseq",
+    configure_in_place = True,
+    lib_source = "@librseq_repo//:all_srcs",
+    autogen = True,
+    autogen_command="./bootstrap",
+    out_static_libs = ["librseq.a"],
+)
 
 cc_library(
   name = "epoch_ptr",
@@ -15,7 +25,9 @@ cc_library(
   deps = [
     "@com_google_glog//:glog",
     "@HyperSharedPointer//:hyper_shared_pointer",
+    ":librseq",
   ],
+  linkopts = ["-latomic"],
 )
 
 cc_test(
