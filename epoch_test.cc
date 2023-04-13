@@ -1,4 +1,4 @@
-#include "epoch_ptr.h"
+#include "epoch.h"
 
 #include <glog/logging.h>
 
@@ -114,9 +114,13 @@ TEST(Epoch, delayed_dtor) {
 
   Epoch::new_epoch();  // Epoch 3
 
+  EXPECT_EQ(foo_in_epoch_1->data, 11);
+  EXPECT_EQ(foo_in_epoch_2->data, 12);
+
   epoch_1_ref.reset();  // Free last reference to Epoch 1, which also frees last reference to Epoch 2
 
   // EXPECT_EQ(foo_in_epoch_1->data, 11);  // heap-use-after-free
   // EXPECT_EQ(foo_in_epoch_2->data, 12);  // heap-use-after-free
 }
+
 }

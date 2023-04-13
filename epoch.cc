@@ -1,4 +1,4 @@
-#include "epoch_ptr.h"
+#include "epoch.h"
 
 #include <rseq/rseq.h>
 

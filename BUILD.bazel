@@ -17,10 +17,10 @@ configure_make(
 )
 
 cc_library(
-  name = "epoch_ptr",
-  srcs = ["epoch_ptr.cc"],
+  name = "epoch",
+  srcs = ["epoch.cc"],
   hdrs = [
-    "epoch_ptr.h",
+    "epoch.h",
   ],
   deps = [
     "@com_google_glog//:glog",
@@ -31,10 +31,10 @@ cc_library(
 )
 
 cc_test(
-  name = "epoch_ptr_test",
-  srcs = ["epoch_ptr_test.cc"],
+  name = "epoch_test",
+  srcs = ["epoch_test.cc"],
   deps = [
-    ":epoch_ptr",
+    ":epoch",
     "@gtest//:gtest",
     "@gtest//:gtest_main",
     "@com_google_glog//:glog",
