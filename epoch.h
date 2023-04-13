@@ -13,6 +13,9 @@ namespace theta {
 
 size_t get_local_cpu();
 
+class CPULocalMemoryPools;
+using AllocatorPointer = hsp::HyperSharedPointer<CPULocalMemoryPools>;
+
 static constexpr size_t kPageSize = 4096;
 
 struct alignas(kPageSize) Page {
@@ -131,12 +134,12 @@ class CPULocalMemoryPools {
   std::vector<MemoryPool> pools_;
   // This will keep the pools from the next epoch alive until this one is
   // destroyed. Using a mutex to allow cross-thread communication.
-  hsp::HyperSharedPointer<CPULocalMemoryPools> next_epoch_{nullptr};
+  AllocatorPointer next_epoch_{nullptr};
 };
 
 class Epoch {
  public:
-  static hsp::HyperSharedPointer<CPULocalMemoryPools> get_allocator();
+  static AllocatorPointer get_allocator();
 
   static void new_epoch();
 
@@ -149,6 +152,60 @@ class Epoch {
   Epoch() : pools_(new CPULocalMemoryPools{}) {}
 
   void new_epoch_impl();
+};
+
+template <typename T>
+class EpochPtr {
+  template <typename U, typename... Args>
+  friend EpochPtr<U> makeEpochPtr(Args... args);
+
+ public:
+  EpochPtr() : t_(nullptr), allocator_(nullptr) {}
+
+  template <typename... Args>
+  explicit EpochPtr(Args... args) {
+    allocator_ = Epoch::get_allocator();
+    t_ = allocator_->allocate<T>(std::forward<Args>(args)...);
+  }
+
+  EpochPtr(EpochPtr&& other)
+      : t_(other.t_), allocator_(std::move(other.allocator_)) {
+    other.t_ = nullptr;
+  }
+
+  EpochPtr& operator=(const EpochPtr& other) {
+    t_ = other.t_;
+    allocator_ = other.allocator_;
+    return *this;
+  }
+
+  EpochPtr(const EpochPtr& other)
+      : t_(other.t_), allocator_(other.allocator_) {}
+
+  EpochPtr& operator=(EpochPtr&& other) {
+    t_ = other.t_;
+    other.t_ = nullptr;
+    allocator_ = std::move(other.allocator_);
+    return *this;
+  }
+
+  ~EpochPtr() {
+    t_ = nullptr;
+    allocator_.reset();
+  }
+
+  void reset() {
+    t_ = nullptr;
+    allocator_.reset();
+  }
+
+  T& operator*() const { return *t_; }
+
+  T* operator->() const { return t_; }
+
+ private:
+  T* t_;
+  AllocatorPointer allocator_;
 };
 
 }  // namespace theta

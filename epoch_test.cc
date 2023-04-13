@@ -30,10 +30,10 @@ TEST(MemoryPool, allocate) {
 
 TEST(MemoryPool, allocateStruct) {
   struct Foo {
-    int foo_in_epoch_0;
+    int a;
     int b;
 
-    Foo(int aa, int bb) : foo_in_epoch_0(aa), b(bb) {}
+    Foo(int aa, int bb) : a(aa), b(bb) {}
   };
 
   MemoryPool mp;
@@ -46,17 +46,17 @@ TEST(MemoryPool, allocateStruct) {
   }
 
   for (int i = 0; i < kNumVals; i++) {
-    EXPECT_EQ(vals[i]->foo_in_epoch_0, i);
+    EXPECT_EQ(vals[i]->a, i);
     EXPECT_EQ(vals[i]->b, 100 * i);
   }
 }
 
 TEST(CPULocalMemoryPools, allocate) {
   struct Foo {
-    int foo_in_epoch_0;
+    int a;
     int b;
 
-    Foo(int aa, int bb) : foo_in_epoch_0(aa), b(bb) {}
+    Foo(int aa, int bb) : a(aa), b(bb) {}
   };
 
   CPULocalMemoryPools mp;
@@ -76,7 +76,7 @@ TEST(CPULocalMemoryPools, allocate) {
 
   for (size_t cpu = 0; cpu < std::thread::hardware_concurrency(); cpu++) {
     for (int i = 0; i < kNumVals; i++) {
-      EXPECT_EQ(vals[cpu][i]->foo_in_epoch_0, i);
+      EXPECT_EQ(vals[cpu][i]->a, i);
       EXPECT_EQ(vals[cpu][i]->b, i + cpu);
     }
   }
@@ -89,38 +89,78 @@ TEST(Epoch, delayed_dtor) {
     int data;
   };
 
-  Foo* foo_in_epoch_0;
-  Foo* foo_in_epoch_1;
+  Foo* in_epoch_0;
+  Foo* in_epoch_1;
   hsp::HyperSharedPointer<CPULocalMemoryPools> epoch_1_ref;
   {
     auto hptr = Epoch::get_allocator();  // Epoch 0
-    foo_in_epoch_0 = hptr->allocate<Foo>(10);
-    EXPECT_EQ(foo_in_epoch_0->data, 10);
+    in_epoch_0 = hptr->allocate<Foo>(10);
+    EXPECT_EQ(in_epoch_0->data, 10);
     Epoch::new_epoch();  // Epoch 1
     epoch_1_ref = Epoch::get_allocator();
-    EXPECT_EQ(foo_in_epoch_0->data, 10);
-    foo_in_epoch_1 = epoch_1_ref->allocate<Foo>(11);
-    EXPECT_EQ(foo_in_epoch_1->data, 11);
+    EXPECT_EQ(in_epoch_0->data, 10);
+    in_epoch_1 = epoch_1_ref->allocate<Foo>(11);
+    EXPECT_EQ(in_epoch_1->data, 11);
   }  // Free last reference to Epoch 0
 
-  // EXPECT_EQ(foo_in_epoch_0->data, 5); // heap-use-after-free
-  EXPECT_EQ(foo_in_epoch_1->data, 11);
+  // EXPECT_EQ(in_epoch_0->data, 5); // heap-use-after-free
+  EXPECT_EQ(in_epoch_1->data, 11);
 
   Epoch::new_epoch();  // Epoch 2
 
-  Foo* foo_in_epoch_2 = Epoch::get_allocator()->allocate<Foo>(12);
-  EXPECT_EQ(foo_in_epoch_1->data, 11);
-  EXPECT_EQ(foo_in_epoch_2->data, 12);
+  Foo* in_epoch_2 = Epoch::get_allocator()->allocate<Foo>(12);
+  EXPECT_EQ(in_epoch_1->data, 11);
+  EXPECT_EQ(in_epoch_2->data, 12);
 
   Epoch::new_epoch();  // Epoch 3
 
-  EXPECT_EQ(foo_in_epoch_1->data, 11);
-  EXPECT_EQ(foo_in_epoch_2->data, 12);
+  EXPECT_EQ(in_epoch_1->data, 11);
+  EXPECT_EQ(in_epoch_2->data, 12);
 
   epoch_1_ref.reset();  // Free last reference to Epoch 1, which also frees last reference to Epoch 2
 
-  // EXPECT_EQ(foo_in_epoch_1->data, 11);  // heap-use-after-free
-  // EXPECT_EQ(foo_in_epoch_2->data, 12);  // heap-use-after-free
+  // EXPECT_EQ(in_epoch_1->data, 11);  // heap-use-after-free
+  // EXPECT_EQ(in_epoch_2->data, 12);  // heap-use-after-free
+}
+
+TEST(EpochPtr, make) {
+  struct Foo {
+    Foo(int d) : data(d) {}
+
+    int data;
+  };
+
+  EpochPtr<Foo> in_epoch_0;
+  EpochPtr<Foo> in_epoch_1;
+  hsp::HyperSharedPointer<CPULocalMemoryPools> epoch_1_ref;
+  {
+    auto hptr = Epoch::get_allocator();  // Epoch 0
+    in_epoch_0 = EpochPtr<Foo>{10};
+    EXPECT_EQ(in_epoch_0->data, 10);
+    Epoch::new_epoch();  // Epoch 1
+    in_epoch_1 = EpochPtr<Foo>{11};
+    EXPECT_EQ(in_epoch_0->data, 10);
+    EXPECT_EQ(in_epoch_1->data, 11);
+  }  // Free last reference to Epoch 0
+
+  // EXPECT_EQ(in_epoch_0->data, 5); // heap-use-after-free
+  EXPECT_EQ(in_epoch_1->data, 11);
+
+  Epoch::new_epoch();  // Epoch 2
+
+  auto in_epoch_2 = EpochPtr<Foo>{12};
+  EXPECT_EQ(in_epoch_1->data, 11);
+  EXPECT_EQ(in_epoch_2->data, 12);
+
+  Epoch::new_epoch();  // Epoch 3
+
+  EXPECT_EQ(in_epoch_1->data, 11);
+  EXPECT_EQ(in_epoch_2->data, 12);
+
+  in_epoch_1.reset();
+  epoch_1_ref.reset();  // Free last reference to Epoch 1, which also frees last reference to Epoch 2
+
+  EXPECT_EQ(in_epoch_2->data, 12);
 }
 
 }
