@@ -1,5 +1,6 @@
 #include "epoch.h"
 
+#include <mutex>
 #include <rseq/rseq.h>
 
 namespace theta {
@@ -20,21 +21,17 @@ size_t get_local_cpu() {
 
 /*static*/
 hsp::HyperSharedPointer<CPULocalMemoryPools> Epoch::get_allocator() {
-  return Epoch::get_instance().pools_.load(std::memory_order_acquire)->get();
+  return Epoch::get_instance().pools_.get();
 }
 
 /*static*/
-void Epoch::new_epoch() {
-  auto* new_ka =
-      new hsp::KeepAlive<CPULocalMemoryPools>{new CPULocalMemoryPools{}};
-  auto* old_ka =
-      Epoch::get_instance().pools_.exchange(new_ka, std::memory_order_acq_rel);
-  auto old_hsp = old_ka->get();
-  {
-    std::lock_guard lock{old_hsp->mutex_};
-    old_hsp->next_epoch_ = new_ka->get();
-  }
-  delete old_ka;
+void Epoch::new_epoch() { get_instance().new_epoch_impl(); }
+
+void Epoch::new_epoch_impl() {
+  std::lock_guard lock{mutex_};
+  auto old_epoch = pools_.get();
+  auto new_epoch = pools_.reset(new CPULocalMemoryPools{});
+  old_epoch->next_epoch_ = std::move(new_epoch);
 }
 
 /*static*/

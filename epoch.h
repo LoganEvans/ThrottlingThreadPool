@@ -108,8 +108,8 @@ class CPULocalMemoryPools {
  public:
   CPULocalMemoryPools() : pools_(std::thread::hardware_concurrency()) {}
 
-  ~CPULocalMemoryPools() { 
-    std::lock_guard lock{mutex_};
+  ~CPULocalMemoryPools() {
+    std::atomic_thread_fence(std::memory_order::acquire);
     next_epoch_.reset();
   }
 
@@ -131,7 +131,6 @@ class CPULocalMemoryPools {
   std::vector<MemoryPool> pools_;
   // This will keep the pools from the next epoch alive until this one is
   // destroyed. Using a mutex to allow cross-thread communication.
-  std::mutex mutex_;
   hsp::HyperSharedPointer<CPULocalMemoryPools> next_epoch_{nullptr};
 };
 
@@ -144,11 +143,12 @@ class Epoch {
  private:
   static Epoch& get_instance();
 
-  std::atomic<hsp::KeepAlive<CPULocalMemoryPools>*> pools_{nullptr};
+  hsp::KeepAlive<CPULocalMemoryPools> pools_{nullptr};
+  std::mutex mutex_;
 
-  Epoch()
-      : pools_(new hsp::KeepAlive<CPULocalMemoryPools>{
-            new CPULocalMemoryPools{}}) {}
+  Epoch() : pools_(new CPULocalMemoryPools{}) {}
+
+  void new_epoch_impl();
 };
 
 }  // namespace theta
