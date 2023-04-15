@@ -8,7 +8,7 @@
 
 namespace theta {
 
-template <typename T>
+template <typename EpochPtrT>
 class Queue {
  public:
   class Link {
@@ -16,26 +16,27 @@ class Queue {
     friend class Queue;
 
    public:
-    Link(T* t, AllocatorPointer allocator)
-        : t_(t), allocator_(std::move(allocator)) {}
+    Link(EpochPtrT t, AllocatorPointer allocator)
+        : t_(std::move(t)), allocator_(std::move(allocator)) {}
 
-    Link(T* t = nullptr) : Link(t, Epoch::get_allocator()) {}
+    EpochPtrT destroy() {
+      EpochPtrT tmp = std::move(t_);
+      allocator_.reset();
+      return tmp;
+    }
 
-    void destroy() { allocator_.reset(); }
-
-    T* get() const { return t_; }
-
-   private:
+   //private:
     std::atomic<Link*> next_{nullptr};
-    T* t_;
+    EpochPtrT t_;
     AllocatorPointer allocator_;
   };
 
   Queue() {}
 
-  void push_back(T* val) {
+  void push_back(EpochPtrT val) {
     auto allocator = Epoch::get_allocator();
-    Link* link = allocator->allocate<Link>(val, std::move(allocator));
+    Link* link =
+        allocator->allocate<Link>(std::move(val), std::move(allocator));
 
   START:
     while (true) {
@@ -71,9 +72,10 @@ class Queue {
     }
   }
 
-  void push_front(T* val) {
+  void push_front(EpochPtrT val) {
     auto allocator = Epoch::get_allocator();
-    Link* link = allocator->allocate<Link>(val, std::move(allocator));
+    Link* link =
+        allocator->allocate<Link>(std::move(val), std::move(allocator));
 
     while (true) {
       Link* head = head_.load(std::memory_order::relaxed);
@@ -85,13 +87,13 @@ class Queue {
     }
   }
 
-  T* pop_front() {
+  EpochPtrT pop_front() {
     std::shared_lock lock{kludge_};
 
     while (true) {
       Link* cursor = head_.load(std::memory_order::acquire);
       if (!cursor) {
-        return nullptr;
+        return EpochPtrT{};
       }
 
       Link* cursor_next = cursor->next_.load(std::memory_order::acquire);
@@ -105,20 +107,18 @@ class Queue {
       if (head_.compare_exchange_weak(cursor, cursor_next,
                                       std::memory_order::release,
                                       std::memory_order::relaxed)) {
-        T* v = cursor->get();
-        cursor->destroy();
-        return v;
+        return cursor->destroy();
       }
     }
   }
 
-  T* pop_back() {
+  EpochPtrT pop_back() {
     std::unique_lock lock{kludge_};
 
     while (true) {
       Link* cursor = head_.load(std::memory_order::acquire);
       if (cursor == nullptr) {
-        return nullptr;
+        return EpochPtrT{};
       }
 
       Link* cursor_next = cursor->next_.load(std::memory_order::acquire);
@@ -126,9 +126,7 @@ class Queue {
         if (head_.compare_exchange_strong(cursor, nullptr,
                                           std::memory_order::release,
                                           std::memory_order::relaxed)) {
-          T* v = cursor->get();
-          cursor->destroy();
-          return v;
+          return cursor->destroy();
         } else {
           continue;
         }
@@ -152,9 +150,7 @@ class Queue {
 
       cursor->next_.store(nullptr, std::memory_order::release);
 
-      T* v = cursor_next->get();
-      cursor_next->destroy();
-      return v;
+      return cursor_next->destroy();
     }
   }
 

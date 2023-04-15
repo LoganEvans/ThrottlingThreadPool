@@ -60,6 +60,7 @@ cc_test(
   name = "queue_test",
   srcs = ["queue_test.cc"],
   deps = [
+    ":epoch",
     ":queue",
     "@gtest//:gtest",
     "@gtest//:gtest_main",
@@ -78,6 +79,7 @@ cc_library(
   ],
   deps = [
     "@com_google_glog//:glog",
+    ":queue",
     ":worker",
   ],
   copts = COPTS,

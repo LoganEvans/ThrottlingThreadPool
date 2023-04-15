@@ -156,11 +156,10 @@ class Epoch {
 
 template <typename T>
 class EpochPtr {
-  template <typename U, typename... Args>
-  friend EpochPtr<U> makeEpochPtr(Args... args);
-
  public:
   EpochPtr() : t_(nullptr), allocator_(nullptr) {}
+
+  using value_type = T;
 
   template <typename... Args>
   explicit EpochPtr(Args... args) {
@@ -202,6 +201,8 @@ class EpochPtr {
   T& operator*() const { return *t_; }
 
   T* operator->() const { return t_; }
+
+  explicit operator bool() const { return t_ != nullptr; }
 
  private:
   T* t_;
