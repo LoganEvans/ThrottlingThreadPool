@@ -162,9 +162,15 @@ class EpochPtr {
   using value_type = T;
 
   template <typename... Args>
-  explicit EpochPtr(Args... args) {
-    allocator_ = Epoch::get_allocator();
-    t_ = allocator_->allocate<T>(std::forward<Args>(args)...);
+  static EpochPtr<T> make(Args... args) {
+    auto allocator = Epoch::get_allocator();
+    T* t = allocator->allocate<T>(std::forward<Args>(args)...);
+    return EpochPtr(t, std::move(allocator));
+  }
+
+  static EpochPtr<T>* to_address(EpochPtr<T>&& epoch_ptr) {
+    return epoch_ptr.allocator()->template allocate<EpochPtr<T>>(
+        std::move(epoch_ptr));
   }
 
   EpochPtr(EpochPtr&& other)
@@ -204,9 +210,14 @@ class EpochPtr {
 
   explicit operator bool() const { return t_ != nullptr; }
 
+  AllocatorPointer& allocator() { return allocator_; }
+
  private:
   T* t_;
   AllocatorPointer allocator_;
+
+  EpochPtr(T* t, AllocatorPointer allocator)
+      : t_(t), allocator_(std::move(allocator)) {}
 };
 
 }  // namespace theta

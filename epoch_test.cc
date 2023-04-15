@@ -135,10 +135,10 @@ TEST(EpochPtr, make) {
   hsp::HyperSharedPointer<CPULocalMemoryPools> epoch_1_ref;
   {
     auto hptr = Epoch::get_allocator();  // Epoch 0
-    in_epoch_0 = EpochPtr<Foo>{10};
+    in_epoch_0 = EpochPtr<Foo>::make(10);
     EXPECT_EQ(in_epoch_0->data, 10);
     Epoch::new_epoch();  // Epoch 1
-    in_epoch_1 = EpochPtr<Foo>{11};
+    in_epoch_1 = EpochPtr<Foo>::make(11);
     EXPECT_EQ(in_epoch_0->data, 10);
     EXPECT_EQ(in_epoch_1->data, 11);
   }  // Free last reference to Epoch 0
@@ -148,7 +148,7 @@ TEST(EpochPtr, make) {
 
   Epoch::new_epoch();  // Epoch 2
 
-  auto in_epoch_2 = EpochPtr<Foo>{12};
+  auto in_epoch_2 = EpochPtr<Foo>::make(12);
   EXPECT_EQ(in_epoch_1->data, 11);
   EXPECT_EQ(in_epoch_2->data, 12);
 

@@ -1,163 +1,194 @@
 #pragma once
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "epoch.h"
 
 namespace theta {
 
-template <typename EpochPtrT>
-class Queue {
+class QueueOpts {
  public:
-  class Link {
-    template <typename U>
-    friend class Queue;
-
-   public:
-    Link(EpochPtrT t, AllocatorPointer allocator)
-        : t_(std::move(t)), allocator_(std::move(allocator)) {}
-
-    EpochPtrT destroy() {
-      EpochPtrT tmp = std::move(t_);
-      allocator_.reset();
-      return tmp;
-    }
-
-   //private:
-    std::atomic<Link*> next_{nullptr};
-    EpochPtrT t_;
-    AllocatorPointer allocator_;
-  };
-
-  Queue() {}
-
-  void push_back(EpochPtrT val) {
-    auto allocator = Epoch::get_allocator();
-    Link* link =
-        allocator->allocate<Link>(std::move(val), std::move(allocator));
-
-  START:
-    while (true) {
-      Link* cursor = head_.load(std::memory_order::acquire);
-      if (cursor == nullptr) {
-        if (head_.compare_exchange_weak(cursor, link,
-                                        std::memory_order::release,
-                                        std::memory_order::relaxed)) {
-          return;
-        }
-        continue;
-      }
-
-      Link* cursor_next = cursor->next_.load(std::memory_order_acquire);
-
-      while (true) {
-        cursor_next = cursor->next_.load(std::memory_order::acquire);
-        if (cursor == cursor_next) {
-          // Another thread is in the middle of pop_back.
-          goto START;
-        }
-        if (!cursor_next) {
-          break;
-        }
-        cursor = cursor_next;
-      }
-
-      if (cursor->next_.compare_exchange_strong(cursor_next, link,
-                                                std::memory_order::release,
-                                                std::memory_order::relaxed)) {
-        return;
-      }
-    }
-  }
-
-  void push_front(EpochPtrT val) {
-    auto allocator = Epoch::get_allocator();
-    Link* link =
-        allocator->allocate<Link>(std::move(val), std::move(allocator));
-
-    while (true) {
-      Link* head = head_.load(std::memory_order::relaxed);
-      link->next_.store(head, std::memory_order::release);
-      if (head_.compare_exchange_weak(head, link, std::memory_order::release,
-                                      std::memory_order::relaxed)) {
-        break;
-      }
-    }
-  }
-
-  EpochPtrT pop_front() {
-    std::shared_lock lock{kludge_};
-
-    while (true) {
-      Link* cursor = head_.load(std::memory_order::acquire);
-      if (!cursor) {
-        return EpochPtrT{};
-      }
-
-      Link* cursor_next = cursor->next_.load(std::memory_order::acquire);
-      if (cursor == cursor_next) {
-        // We had a list with 2 elements, and while pop_back is attempting to
-        // destroy the last element, pop_front destroyed the first one and is
-        // now looking at the one pop_back is working on.
-        continue;
-      }
-
-      if (head_.compare_exchange_weak(cursor, cursor_next,
-                                      std::memory_order::release,
-                                      std::memory_order::relaxed)) {
-        return cursor->destroy();
-      }
-    }
-  }
-
-  EpochPtrT pop_back() {
-    std::unique_lock lock{kludge_};
-
-    while (true) {
-      Link* cursor = head_.load(std::memory_order::acquire);
-      if (cursor == nullptr) {
-        return EpochPtrT{};
-      }
-
-      Link* cursor_next = cursor->next_.load(std::memory_order::acquire);
-      if (!cursor_next) {
-        if (head_.compare_exchange_strong(cursor, nullptr,
-                                          std::memory_order::release,
-                                          std::memory_order::relaxed)) {
-          return cursor->destroy();
-        } else {
-          continue;
-        }
-      }
-
-      Link* cursor_next_next;
-      do {
-        cursor_next_next =
-            cursor_next->next_.load(std::memory_order::acquire);
-        if (cursor_next_next) {
-          cursor = cursor_next;
-          cursor_next = cursor_next_next;
-        }
-      } while (cursor_next_next);
-
-      if (!cursor_next->next_.compare_exchange_strong(
-              cursor_next_next, cursor_next, std::memory_order::release,
-              std::memory_order::acquire)) {
-        continue;
-      }
-
-      cursor->next_.store(nullptr, std::memory_order::release);
-
-      return cursor_next->destroy();
-    }
+  size_t max_size() const { return max_size_; }
+  QueueOpts& set_max_size(size_t val) {
+    max_size_ = val;
+    return *this;
   }
 
  private:
-  std::atomic<Link*> head_{nullptr};
-  // This prevents pop_front and pop_back from opperating at the same time.
-  std::shared_mutex kludge_;
+  size_t max_size_{512};
+};
+
+template <typename T>
+class Queue {
+  static constexpr size_t next_pow_2(int v) {
+    int lg_v = 8 * sizeof(v) - __builtin_clz(v);
+    return 1 << lg_v;
+  }
+
+ public:
+  Queue(QueueOpts opts)
+      : ht_(/*head=*/0, /*tail=*/0), buf_(next_pow_2(opts.max_size())) {}
+
+  void push_back(EpochPtr<T> val) {
+    EpochPtr<T>* t = EpochPtr<T>::to_address(std::move(val));
+
+    while (t) {
+      uint64_t expected = ht_.line.load(std::memory_order_relaxed);
+      uint32_t head, tail;
+      do {
+        head = HeadTail::to_head(expected);
+        tail = HeadTail::to_tail(expected);
+        if (tail == 0) {
+          tail = buf_.size() - 1;
+        } else {
+          tail--;
+        }
+
+        if (tail == head) {
+          // Attempt to push on a full queue. Need to wait until something is
+          // popped.
+          expected = ht_.line.load(std::memory_order_acquire);
+          continue;
+        }
+      } while (!ht_.line.compare_exchange_weak(
+          expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
+          std::memory_order::release, std::memory_order::relaxed));
+
+      // In some cases, e.g. push -> pop -> push, two threads will attempt to
+      // push to the same index. If this happens, push the old value back into
+      // the queue.
+      uint32_t index = HeadTail::to_tail(expected);
+      t = buf_[index].exchange(t, std::memory_order::acq_rel);
+    }
+  }
+
+  void push_front(EpochPtr<T> val) {
+    EpochPtr<T>* t = EpochPtr<T>::to_address(std::move(val));
+
+    while (t) {
+      uint64_t expected = ht_.line.load(std::memory_order_relaxed);
+      uint32_t head, tail;
+      do {
+        head = HeadTail::to_head(expected);
+        tail = HeadTail::to_tail(expected);
+        if (head == buf_.size() - 1) {
+          head = 0;
+        } else {
+          head++;
+        }
+
+        if (head == tail) {
+          // Attempt to push on a full queue. Need to wait until something is
+          // popped.
+          expected = ht_.line.load(std::memory_order_acquire);
+          continue;
+        }
+      } while (!ht_.line.compare_exchange_weak(
+          expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
+          std::memory_order::release, std::memory_order::relaxed));
+
+      // In some cases, e.g. push -> pop -> push, two threads will attempt to
+      // push to the same index. If this happens, push the old value back into
+      // the queue.
+      int32_t index = HeadTail::to_head(expected);
+      t = buf_[index].exchange(t, std::memory_order::acq_rel);
+    }
+  }
+
+  std::optional<EpochPtr<T>> pop_front() {
+    uint64_t expected = ht_.line.load(std::memory_order_relaxed);
+    uint32_t head, tail;
+    do {
+      head = HeadTail::to_head(expected);
+      tail = HeadTail::to_tail(expected);
+
+      if (head == tail) {
+        // Attempt to pop from an empty queue.
+        return {};
+      }
+
+      if (head == 0) {
+        head = buf_.size() - 1;
+      } else {
+        head--;
+      }
+    } while (!ht_.line.compare_exchange_weak(
+        expected, HeadTail::to_line(head, tail), std::memory_order::release,
+        std::memory_order::relaxed));
+
+    uint32_t index = HeadTail::to_head(expected);
+    EpochPtr<T>* t{nullptr};
+    // It's possible that a push operation has obtained this index but hasn't
+    // yet written its value which will cause us to spin.
+    do {
+      t = buf_[index].exchange(nullptr, std::memory_order::acq_rel);
+    } while (!t);
+
+    auto ret = *t;
+    t->reset();
+    return ret;
+  }
+
+  std::optional<EpochPtr<T>> pop_back() {
+    uint64_t expected = ht_.line.load(std::memory_order_relaxed);
+    uint32_t head, tail;
+    do {
+      head = HeadTail::to_head(expected);
+      tail = HeadTail::to_tail(expected);
+
+      if (head == tail) {
+        // Attempt to pop from an empty queue.
+        return {};
+      }
+
+      if (tail == buf_.size() - 1) {
+        tail = 0;
+      } else {
+        tail++;
+      }
+    } while (!ht_.line.compare_exchange_weak(
+        expected, HeadTail::to_line(head, tail), std::memory_order::release,
+        std::memory_order::relaxed));
+
+    uint32_t index = HeadTail::to_tail(expected);
+    EpochPtr<T>* t{nullptr};
+    // It's possible that a push operation has obtained this index but hasn't
+    // yet written its value which will cause us to spin.
+    do {
+      t = buf_[index].exchange(nullptr, std::memory_order::acq_rel);
+    } while (!t);
+
+    auto ret = *t;
+    t->reset();
+    return ret;
+  }
+
+ private:
+  union HeadTail {
+    static constexpr uint64_t to_line(uint32_t head, uint32_t tail) {
+      return (static_cast<uint64_t>(head) << 32) | tail;
+    }
+
+    static constexpr uint32_t to_head(uint64_t line) { return line >> 32; }
+
+    static constexpr uint32_t to_tail(uint64_t line) {
+      return static_cast<uint32_t>(line);
+    }
+
+    struct {
+      std::atomic<uint32_t> head;
+      std::atomic<uint32_t> tail;
+    };
+    std::atomic<uint64_t> line;
+
+    HeadTail(uint32_t head, uint32_t tail) : line(to_line(head, tail)) {}
+  } ht_;
+
+  std::vector<std::atomic<EpochPtr<T>*>> buf_;
 };
 
 }  // namespace theta

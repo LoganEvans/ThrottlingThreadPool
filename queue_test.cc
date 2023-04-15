@@ -9,44 +9,38 @@
 
 namespace theta {
 
-TEST(Queue, ctor) {
-  EpochPtr<int> v{5};
-  Queue<EpochPtr<int>>::Link foo{v, Epoch::get_allocator()};
-  EXPECT_EQ(*foo.destroy(), *v);
-}
-
 TEST(Queue, push_back_pop_front) {
-  Queue<EpochPtr<int>> queue;
+  Queue<int> queue{QueueOpts{}};
 
   for (int i = 0; i < 10; i++) {
-    queue.push_back(EpochPtr<int>{100 + i});
+    queue.push_back(EpochPtr<int>::make(100 + i));
   }
 
   int expected = 100;
   while (true) {
     auto v = queue.pop_front();
-    if (!v) {
+    if (!v.has_value()) {
       break;
     }
-    EXPECT_EQ(*v, expected++);
+    EXPECT_EQ(*v.value(), expected++);
   }
   EXPECT_EQ(expected, 110);
 }
 
 TEST(Queue, push_front_pop_back) {
-  Queue<EpochPtr<int>> queue;
+  Queue<int> queue{QueueOpts{}};
 
   for (int i = 0; i < 10; i++) {
-    queue.push_front(EpochPtr<int>{100 + i});
+    queue.push_front(EpochPtr<int>::make(100 + i));
   }
 
   int expected = 100;
   while (true) {
     auto v = queue.pop_back();
-    if (!v) {
+    if (!v.has_value()) {
       break;
     }
-    EXPECT_EQ(*v, expected++);
+    EXPECT_EQ(*v.value(), expected++);
   }
   EXPECT_EQ(expected, 110);
 }
