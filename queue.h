@@ -6,96 +6,162 @@
 
 #include "epoch.h"
 
-template <typename T>
-class Link {
- public:
-  Link(T* t, AllocatorPointer allocator)
-      : t_(t), allocator_(std::move(allocator)) {}
-
-  Link(T* t = nullptr) : Link(t, Epoch::get_allocator()) {}
-
-  void destroy() ~Link() { allocator_.reset(); }
-
-  T* get() const { return t_; }
-
-  T* remove() { return nullptr; }
-
-  // Appends a Link to the list.
-  void push(T* t) {}
-
- private:
-  std::atomic<Link*> prev{nullptr};
-  std::atomic<Link*> next{nullptr};
-  std::atomic<T*> t_;
-  AllocatorPointer allocator_;
-};
+namespace theta {
 
 template <typename T>
 class Queue {
  public:
-  using Link = Link<T>;
+  class Link {
+    template <typename U>
+    friend class Queue;
 
-  Queue() { head_.push_head(tail_); }
+   public:
+    Link(T* t, AllocatorPointer allocator)
+        : t_(t), allocator_(std::move(allocator)) {}
+
+    Link(T* t = nullptr) : Link(t, Epoch::get_allocator()) {}
+
+    void destroy() { allocator_.reset(); }
+
+    T* get() const { return t_; }
+
+   private:
+    std::atomic<Link*> next_{nullptr};
+    T* t_;
+    AllocatorPointer allocator_;
+  };
+
+  Queue() {}
 
   void push_back(T* val) {
-    Link* link{val};
+    auto allocator = Epoch::get_allocator();
+    Link* link = allocator->allocate<Link>(val, std::move(allocator));
 
+  START:
     while (true) {
-      Link* tail = tail_.load(std::memory_order_acquire);
-      Link* tail_next;
-      // tail_ can be stale, so march to the end of the list.
-      while (tail_next = tail->next.load(std::memory_order_acquire)) {
-        tail = tail_next;
+      Link* cursor = head_.load(std::memory_order::acquire);
+      if (cursor == nullptr) {
+        if (head_.compare_exchange_weak(cursor, link,
+                                        std::memory_order::release,
+                                        std::memory_order::relaxed)) {
+          return;
+        }
+        continue;
       }
-      link->prev.store(tail, std::memory_order_release);
 
-      Link* expected{nullptr};
-      if (tail->next.compare_exchange_weak(expected, link,
-                                           std::memory_order_release,
-                                           std::memory_order_relaxed)) {
-        // This operation races with other calls to push_back, which is why
-        // it's important to check if tail_ is stale.
-        tail_.store(link, std::memory_order_release);
-        break;
+      Link* cursor_next = cursor->next_.load(std::memory_order_acquire);
+
+      while (true) {
+        cursor_next = cursor->next_.load(std::memory_order::acquire);
+        if (cursor == cursor_next) {
+          // Another thread is in the middle of pop_back.
+          goto START;
+        }
+        if (!cursor_next) {
+          break;
+        }
+        cursor = cursor_next;
+      }
+
+      if (cursor->next_.compare_exchange_strong(cursor_next, link,
+                                                std::memory_order::release,
+                                                std::memory_order::relaxed)) {
+        return;
       }
     }
   }
 
   void push_front(T* val) {
-    Link* link{val};
+    auto allocator = Epoch::get_allocator();
+    Link* link = allocator->allocate<Link>(val, std::move(allocator));
 
     while (true) {
-      Link* head = head_.load(std::memory_order_acquire);
-      Link* head_prev;
-      // head_ can be stale, so march to the beginning of the list.
-      while (head_prev = head->prev.load(std::memory_order_acquire)) {
-        head = head_prev;
-      }
-      link->next.store(head, std::memory_order_release);
-
-      Link* expected{nullptr};
-      if (head->next.compare_exchange_weak(expected, link,
-                                           std::memory_order_release,
-                                           std::memory_order_relaxed)) {
-        // This operation races with other calls to push_front, which is why
-        // it's important to check if head_ is stale.
-        head_.store(link, std::memory_order_release);
+      Link* head = head_.load(std::memory_order::relaxed);
+      link->next_.store(head, std::memory_order::release);
+      if (head_.compare_exchange_weak(head, link, std::memory_order::release,
+                                      std::memory_order::relaxed)) {
         break;
       }
     }
   }
 
-  T* pop_front();
+  T* pop_front() {
+    std::shared_lock lock{kludge_};
 
-  T* pop_back();
+    while (true) {
+      Link* cursor = head_.load(std::memory_order::acquire);
+      if (!cursor) {
+        return nullptr;
+      }
+
+      Link* cursor_next = cursor->next_.load(std::memory_order::acquire);
+      if (cursor == cursor_next) {
+        // We had a list with 2 elements, and while pop_back is attempting to
+        // destroy the last element, pop_front destroyed the first one and is
+        // now looking at the one pop_back is working on.
+        continue;
+      }
+
+      if (head_.compare_exchange_weak(cursor, cursor_next,
+                                      std::memory_order::release,
+                                      std::memory_order::relaxed)) {
+        T* v = cursor->get();
+        cursor->destroy();
+        return v;
+      }
+    }
+  }
+
+  T* pop_back() {
+    std::unique_lock lock{kludge_};
+
+    while (true) {
+      Link* cursor = head_.load(std::memory_order::acquire);
+      if (cursor == nullptr) {
+        return nullptr;
+      }
+
+      Link* cursor_next = cursor->next_.load(std::memory_order::acquire);
+      if (!cursor_next) {
+        if (head_.compare_exchange_strong(cursor, nullptr,
+                                          std::memory_order::release,
+                                          std::memory_order::relaxed)) {
+          T* v = cursor->get();
+          cursor->destroy();
+          return v;
+        } else {
+          continue;
+        }
+      }
+
+      Link* cursor_next_next;
+      do {
+        cursor_next_next =
+            cursor_next->next_.load(std::memory_order::acquire);
+        if (cursor_next_next) {
+          cursor = cursor_next;
+          cursor_next = cursor_next_next;
+        }
+      } while (cursor_next_next);
+
+      if (!cursor_next->next_.compare_exchange_strong(
+              cursor_next_next, cursor_next, std::memory_order::release,
+              std::memory_order::acquire)) {
+        continue;
+      }
+
+      cursor->next_.store(nullptr, std::memory_order::release);
+
+      T* v = cursor_next->get();
+      cursor_next->destroy();
+      return v;
+    }
+  }
 
  private:
-  union {
-   struct {
-     std::atomic<Link*> head_;
-     std::atomic<Link*> tail_;
-   };
-   std::atomic<__int128> line_{0};
-  };
+  std::atomic<Link*> head_{nullptr};
+  // This prevents pop_front and pop_back from opperating at the same time.
+  std::shared_mutex kludge_;
 };
 
+}  // namespace theta

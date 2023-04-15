@@ -2,9 +2,7 @@
 
 #include <glog/logging.h>
 
-#include <chrono>
-#include <condition_variable>
-#include <mutex>
+#include <array>
 
 #include "gtest/gtest.h"
 
@@ -17,20 +15,43 @@ TEST(Queue, ctor) {
 }
 
 TEST(Queue, push_back_pop_front) {
-  Queue<int>::Link head;
-  Queue<int>::Link tail;
-  head.push_head(&tail);
+  Queue<int> queue;
 
-  for (int i = 0; i < 10; i++) {
-    tail.push_tail(new Queue<int>::Link{new int{i}});
+  std::array<int, 10> arr;
+  for (size_t i = 0; i < arr.size(); i++) {
+    arr[i] = 100 + i;
+    queue.push_front(&arr[i]);
   }
 
-  for (int i = 9; i >= 0; i--) {
-    auto* link = head.pop_head();
-    EXPECT_EQ(*link->get(), i);
-    delete link->get();
-    delete link;
+  int expected = 100;
+  while (true) {
+    int* v = queue.pop_back();
+    if (!v) {
+      break;
+    }
+    EXPECT_EQ(*v, expected++);
   }
+  EXPECT_EQ(expected, 110);
+}
+
+TEST(Queue, push_front_pop_back) {
+  Queue<int> queue;
+
+  std::array<int, 10> arr;
+  for (size_t i = 0; i < arr.size(); i++) {
+    arr[i] = 100 + i;
+    queue.push_back(&arr[i]);
+  }
+
+  int expected = 100;
+  while (true) {
+    int* v = queue.pop_front();
+    if (!v) {
+      break;
+    }
+    EXPECT_EQ(*v, expected++);
+  }
+  EXPECT_EQ(expected, 110);
 }
 
 }  // namespace theta
