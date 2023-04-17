@@ -79,6 +79,7 @@ cc_library(
   ],
   deps = [
     "@com_google_glog//:glog",
+    ":epoch",
     ":queue",
     ":worker",
   ],
@@ -95,6 +96,8 @@ cc_library(
     "worker.h",
   ],
   deps = [
+    ":epoch",
+    ":queue",
     "@com_google_glog//:glog",
   ],
   copts = COPTS,
@@ -107,6 +110,7 @@ cc_library(
   hdrs = ["executor.h"],
   deps = [
     "@com_google_glog//:glog",
+    ":epoch",
     ":task",
     ":worker",
   ],
@@ -120,6 +124,7 @@ cc_library(
   hdrs = ["fifo_executor.h"],
   deps = [
     "@com_google_glog//:glog",
+    ":epoch",
     ":task",
     ":worker",
     ":executor",

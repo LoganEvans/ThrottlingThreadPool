@@ -14,6 +14,7 @@ static_assert(false);
 #include <memory>
 #include <mutex>
 
+#include "epoch.h"
 #include "task.h"
 #include "worker.h"
 
@@ -150,7 +151,7 @@ class ExecutorImpl {
     throw NotImplemented{};
   }
 
-  virtual std::shared_ptr<Task> maybe_pop() = 0;
+  virtual EpochPtr<Task> maybe_pop() = 0;
 
   ExecutorStats* stats() { return &stats_; }
   const ExecutorStats* stats() const { return &stats_; }

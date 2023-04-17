@@ -193,101 +193,74 @@ void Task::run() {
   set_state(State::kFinished);
 }
 
-void TaskQueue::push(std::shared_ptr<Task> task) {
+void TaskQueue::shutdown() {
+  shutdown_.store(true);
+  sem_.release(std::numeric_limits<int32_t>::max() / 2);
+}
+
+bool TaskQueue::is_shutting_down() const {
+  return shutdown_.load(std::memory_order_acquire);
+}
+
+void TaskQueue::push(EpochPtr<Task> task) {
   DCHECK(task);
 
   if (nice_priority() != NicePriority::kNone) {
     task->set_state(Task::nice2queued(nice_priority()));
   }
 
-  {
-    std::unique_lock lock{shared_mutex_};
-    queue_.push_back(std::move(task));
-  }
-
+  queue_.push_back(std::move(task));
   sem_.release();
 }
 
-void TaskQueue::push_front(std::shared_ptr<Task> task) {
+void TaskQueue::push_front(EpochPtr<Task> task) {
   DCHECK(task);
 
   if (nice_priority() != NicePriority::kNone) {
     task->set_state(Task::nice2queued(nice_priority()));
   }
 
-  {
-    std::unique_lock lock{shared_mutex_};
-    queue_.push_front(std::move(task));
-  }
-
+  queue_.push_front(std::move(task));
   sem_.release();
 }
 
-std::shared_ptr<Task> TaskQueue::maybe_pop() {
+std::optional<EpochPtr<Task>> TaskQueue::maybe_pop() {
   if (!sem_.try_acquire()) {
-    return nullptr;
+    return {};
   }
-  return pop_impl();
+
+  auto v = queue_.pop_front();
+  CHECK(v.has_value());
+  return v;
 }
 
-std::shared_ptr<Task> TaskQueue::wait_pop() {
-  sem_.acquire();
-  return pop_impl();
+EpochPtr<Task> TaskQueue::wait_pop() {
+  while (true) {
+    sem_.acquire();
+    if (shutdown_.load(std::memory_order_acquire)) {
+      return nullptr;
+    }
+
+    auto v = queue_.pop_front();
+    if (v) {
+      return v.value();
+    }
+
+    sem_.release(1);
+  }
 }
 
-std::shared_ptr<Task> TaskQueue::maybe_pop_back() {
+std::optional<EpochPtr<Task>> TaskQueue::maybe_pop_back() {
   if (!sem_.try_acquire()) {
-    return nullptr;
+    return {};
   }
 
-  std::unique_lock lock{shared_mutex_};
-  reap_finished_back(lock);
-
-  if (!queue_.empty()) {
-    auto task = std::move(queue_.back());
-    queue_.pop_back();
-    return task;
-  }
-
-  return nullptr;
-}
-
-void TaskQueue::reap_finished() {
-  std::unique_lock lock{shared_mutex_};
-  reap_finished(lock);
-}
-
-void TaskQueue::reap_finished(const std::unique_lock<std::shared_mutex>&) {
-  while (!queue_.empty() && queue_.front()->state() == Task::State::kFinished) {
-    queue_.pop_front();
-  }
-}
-
-void TaskQueue::reap_finished_back(const std::unique_lock<std::shared_mutex>&) {
-  while (!queue_.empty() && queue_.back()->state() == Task::State::kFinished) {
-    queue_.pop_back();
-  }
+  auto v = queue_.pop_back();
+  CHECK(v.has_value());
+  return v;
 }
 
 void TaskQueue::unblock_workers(size_t n) { sem_.release(n); }
-
-bool TaskQueue::is_empty() const {
-  std::lock_guard lock{shared_mutex_};
-  return queue_.empty();
-}
-
-std::shared_ptr<Task> TaskQueue::pop_impl() {
-  std::unique_lock lock{shared_mutex_};
-  reap_finished(lock);
-
-  if (!queue_.empty()) {
-    auto task = std::move(queue_.front());
-    queue_.pop_front();
-    return task;
-  }
-
-  return nullptr;
-}
 
 TaskQueue* TaskQueues::queue(NicePriority priority) {
   switch (priority) {
@@ -300,7 +273,15 @@ TaskQueue* TaskQueues::queue(NicePriority priority) {
   }
 }
 
-void TaskQueues::push(std::shared_ptr<Task> task) {
+void TaskQueues::shutdown() {
+  for (auto prio :
+       std::to_array({NicePriority::kThrottled, NicePriority::kRunning,
+                      NicePriority::kPrioritized})) {
+    queue(prio)->shutdown();
+  }
+}
+
+void TaskQueues::push(EpochPtr<Task> task) {
   switch (task->nice_priority()) {
     case NicePriority::kThrottled:
       task->set_state(Task::State::kQueuedThrottled);

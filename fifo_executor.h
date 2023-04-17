@@ -1,5 +1,6 @@
 #pragma once
 
+#include "epoch.h"
 #include "executor.h"
 #include "task.h"
 
@@ -16,7 +17,7 @@ class FIFOExecutorImpl : public ExecutorImpl {
   FIFOExecutorImpl(const Executor::Opts& opts) : ExecutorImpl(opts) {}
 
  protected:
-  std::shared_ptr<Task> maybe_pop() override;
+  EpochPtr<Task> maybe_pop() override;
 
  private:
   TaskQueue queue_{NicePriority::kNone};

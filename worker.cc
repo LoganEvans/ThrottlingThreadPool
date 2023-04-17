@@ -5,6 +5,7 @@
 #include <sched.h>
 #include <unistd.h>
 
+#include "epoch.h"
 #include "executor.h"
 
 namespace theta {
@@ -16,7 +17,9 @@ Worker::Worker(TaskQueues* queues, NicePriority priority)
 
 Worker::~Worker() { thread_.join(); }
 
-void Worker::shutdown() { shutdown_.store(true, std::memory_order_release); }
+void Worker::shutdown() {
+  queues_->shutdown();
+}
 
 NicePriority Worker::nice_priority() const {
   return priority_.load(std::memory_order_acquire);
@@ -48,17 +51,17 @@ pthread_t Worker::get_pthread() {
 }
 
 void Worker::run_loop() {
-  std::shared_ptr<Task> task{nullptr};
+  EpochPtr<Task> task{nullptr};
 
   while (true) {
     auto priority = nice_priority();
     task = queues_->queue(priority)->wait_pop();
 
-    if (shutdown_.load(std::memory_order_acquire)) {
+    if (!task) {
+      CHECK(queues_->queue(priority)->is_shutting_down());
       break;
     }
 
-    CHECK(task);
     task->run();
 
     // TODO(lpe): After finishing a task, check to see if this worker needs to

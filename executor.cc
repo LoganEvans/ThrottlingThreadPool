@@ -93,23 +93,25 @@ void ExecutorImpl::refill_queues() {
 
   // Throttle a running task
   for (; running_num > running_limit; running_num--) {
-    auto task = executing_.maybe_pop_back();
-    if (!task) {
-      executing_.push(std::move(task));
+    auto optional_task = executing_.maybe_pop_back();
+    if (!optional_task) {
       break;
     }
-    task->set_state(Task::State::kRunningThrottled);
-    throttled_.push_front(std::move(task));
+
+    optional_task.value()->set_state(Task::State::kRunningThrottled);
+    throttled_.push_front(std::move(optional_task.value()));
   }
 
   auto normal_queue = opts().task_queues()->queue(NicePriority::kRunning);
 
   // Unthrottle a running task
   for (; running_num < running_limit; running_num++) {
-    auto task = throttled_.maybe_pop();
-    if (!task) {
+    auto optional_task = throttled_.maybe_pop();
+    if (!optional_task) {
       break;
     }
+    auto task = std::move(optional_task.value());
+
     {
       bool unthrottled = false;
       {

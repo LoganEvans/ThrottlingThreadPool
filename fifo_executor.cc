@@ -8,15 +8,15 @@ FIFOExecutorImpl::~FIFOExecutorImpl() {}
 
 void FIFOExecutorImpl::post(Executor::Func func) {
   auto task =
-      std::make_shared<Task>(Task::Opts{}.set_func(func).set_executor(this));
+      EpochPtr<Task>::make(Task::Opts{}.set_func(func).set_executor(this));
 
   task->set_state(Task::State::kQueuedExecutor);
   queue_.push(std::move(task));
   refill_queues();
 }
 
-std::shared_ptr<Task> FIFOExecutorImpl::maybe_pop() {
-  return queue_.maybe_pop();
+EpochPtr<Task> FIFOExecutorImpl::maybe_pop() {
+  return queue_.maybe_pop().value_or(nullptr);
 }
 
 }  // namespace theta

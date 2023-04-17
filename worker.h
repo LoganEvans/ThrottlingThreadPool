@@ -25,7 +25,6 @@ class Worker {
   TaskQueues* queues_;
   std::atomic<NicePriority> priority_;
   std::thread thread_;
-  std::atomic<bool> shutdown_{false};
 
   void run_loop();
 };

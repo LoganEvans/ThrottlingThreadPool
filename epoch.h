@@ -158,6 +158,7 @@ template <typename T>
 class EpochPtr {
  public:
   EpochPtr() : t_(nullptr), allocator_(nullptr) {}
+  EpochPtr(std::nullptr_t) : t_(nullptr), allocator_(nullptr) {}
 
   using value_type = T;
 

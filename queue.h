@@ -167,6 +167,16 @@ class Queue {
     return ret;
   }
 
+  size_t size() const {
+    uint64_t line = ht_.line.load(std::memory_order_acquire);
+    uint32_t head = HeadTail::to_head(line);
+    uint32_t tail = HeadTail::to_tail(line);
+    if (head < tail) {
+      head += buf_.size();
+    }
+    return head - tail;
+  }
+
  private:
   union HeadTail {
     static constexpr uint64_t to_line(uint32_t head, uint32_t tail) {

@@ -12,8 +12,12 @@ static_assert(false);
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <semaphore>
 #include <shared_mutex>
+
+#include "epoch.h"
+#include "queue.h"
 
 namespace theta {
 
@@ -151,47 +155,41 @@ class TaskQueue {
  public:
   using Func = Task::Func;
 
-  TaskQueue(NicePriority nice_priority) : nice_priority_(nice_priority) {}
+  TaskQueue(NicePriority nice_priority, size_t max_tasks = 512)
+      : nice_priority_(nice_priority),
+        queue_(QueueOpts{}.set_max_size(max_tasks)) {}
 
-  void push(std::shared_ptr<Task> task);
-  void push_front(std::shared_ptr<Task> task);
+  void shutdown();
+  bool is_shutting_down() const;
 
-  std::shared_ptr<Task> maybe_pop();
-  std::shared_ptr<Task> wait_pop();
+  void push(EpochPtr<Task> task);
+  void push_front(EpochPtr<Task> task);
 
-  std::shared_ptr<Task> maybe_pop_back();
+  std::optional<EpochPtr<Task>> maybe_pop();
+  EpochPtr<Task> wait_pop();
 
-  // TODO(lpe): It would be nice to have a remove function that allowed for a
-  // Task to removed from the center of a queue. The current workaround is to
-  // allow a Task to be in a zombie state.
-  void reap_finished();
+  std::optional<EpochPtr<Task>> maybe_pop_back();
 
   void unblock_workers(size_t n);
 
-  bool is_empty() const;
-
   NicePriority nice_priority() const { return nice_priority_; }
 
- //private:
+ private:
   const NicePriority nice_priority_;
 
   std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
 
-  // TODO(lpe): This needs to be lock-free. This mutex is for quick development
-  // only.
-  mutable std::shared_mutex shared_mutex_;
-  std::deque<std::shared_ptr<Task>> queue_;
-
-  std::shared_ptr<Task> pop_impl();
-  void reap_finished(const std::unique_lock<std::shared_mutex>&);
-  void reap_finished_back(const std::unique_lock<std::shared_mutex>&);
+  Queue<Task> queue_;
+  std::atomic<bool> shutdown_{false};
 };
 
 class TaskQueues {
  public:
   TaskQueue* queue(NicePriority priority);
 
-  void push(std::shared_ptr<Task> task);
+  void shutdown();
+
+  void push(EpochPtr<Task> task);
 
  private:
   TaskQueue throttled_queue_{NicePriority::kThrottled};

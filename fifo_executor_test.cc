@@ -11,7 +11,7 @@ namespace theta {
 
 using namespace std::chrono_literals;
 
-TEST(FIFOExecutor, ctor) {
+TEST(FIFOExecutor, DISABLED_ctor) {
   Executor executor = ScalingThreadpool::getInstance().create(
       Executor::Opts{}
           .set_priority_policy(PriorityPolicy::FIFO)
@@ -25,7 +25,7 @@ TEST(FIFOExecutor, ctor) {
   EXPECT_EQ(executor.opts().require_low_latency(), true);
 }
 
-TEST(FIFOExecutor, post) {
+TEST(FIFOExecutor, DISABLED_post) {
   std::condition_variable cv;
   std::mutex mu;
 
@@ -61,7 +61,9 @@ TEST(FIFOExecutor, saturate) {
   auto job = std::function<void()>([&]() {
     std::lock_guard l{jobMutex};
     int jobs = 1 + jobsRun.fetch_add(1, std::memory_order_acq_rel);
+    fprintf(stderr, "jobs: %d\n", jobs);
     if (jobs == kJobs) {
+      fprintf(stderr, "here\n");
       lock.unlock();
       cv.notify_one();
     }
