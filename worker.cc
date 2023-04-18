@@ -51,11 +51,9 @@ pthread_t Worker::get_pthread() {
 }
 
 void Worker::run_loop() {
-  EpochPtr<Task> task{nullptr};
-
   while (true) {
     auto priority = nice_priority();
-    task = queues_->queue(priority)->wait_pop();
+    EpochPtr<Task> task = queues_->queue(priority)->wait_pop();
 
     if (!task) {
       CHECK(queues_->queue(priority)->is_shutting_down());

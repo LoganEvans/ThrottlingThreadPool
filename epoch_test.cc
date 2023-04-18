@@ -117,7 +117,8 @@ TEST(Epoch, delayed_dtor) {
   EXPECT_EQ(in_epoch_1->data, 11);
   EXPECT_EQ(in_epoch_2->data, 12);
 
-  epoch_1_ref.reset();  // Free last reference to Epoch 1, which also frees last reference to Epoch 2
+  epoch_1_ref.reset();  // Free last reference to Epoch 1, which also frees last
+                        // reference to Epoch 2
 
   // EXPECT_EQ(in_epoch_1->data, 11);  // heap-use-after-free
   // EXPECT_EQ(in_epoch_2->data, 12);  // heap-use-after-free
@@ -158,9 +159,21 @@ TEST(EpochPtr, make) {
   EXPECT_EQ(in_epoch_2->data, 12);
 
   in_epoch_1.reset();
-  epoch_1_ref.reset();  // Free last reference to Epoch 1, which also frees last reference to Epoch 2
+  epoch_1_ref.reset();  // Free last reference to Epoch 1, which also frees last
+                        // reference to Epoch 2
 
   EXPECT_EQ(in_epoch_2->data, 12);
 }
 
+TEST(EpochPtr, make_non_trivial_destructor) {
+  struct Foo {
+    Foo() : bar(new int{3}) {}
+    ~Foo() { delete bar; }
+    int* bar;
+  };
+  EXPECT_FALSE(std::is_trivially_destructible<Foo>{});
+
+  auto foo = EpochPtr<Foo>::make();
 }
+
+}  // namespace theta

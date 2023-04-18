@@ -28,6 +28,12 @@ class alignas(sizeof(__int128)) MemoryPool {
 
   ~MemoryPool() {
     std::lock_guard lock{mutex_};
+
+    while (!dtors_.empty()) {
+      dtors_.back()();
+      dtors_.pop_back();
+    }
+
     for (Page* page : old_pages_) {
       delete page;
     }
@@ -77,6 +83,11 @@ class alignas(sizeof(__int128)) MemoryPool {
     }
   }
 
+  void defer_dtor(std::function<void()> dtor) {
+    std::lock_guard lock{mutex_};
+    dtors_.push_back(dtor);
+  }
+
  private:
   union Data {
     struct {
@@ -103,6 +114,7 @@ class alignas(sizeof(__int128)) MemoryPool {
 
   std::mutex mutex_;
   std::list<Page*> old_pages_;
+  std::list<std::function<void()>> dtors_;
 };
 
 class CPULocalMemoryPools {
@@ -120,20 +132,24 @@ class CPULocalMemoryPools {
   T* allocate_on_cpu(size_t local_cpu, Args... args) {
     T* ptr =
         reinterpret_cast<T*>(pools_[local_cpu].allocate(sizeof(T), alignof(T)));
-    return new (ptr) T{std::forward<Args>(args)...};
+    auto* p = new (ptr) T{std::forward<Args>(args)...};
+
+    if constexpr (!std::is_trivially_destructible<T>{}) {
+      pools_[local_cpu].defer_dtor([p]() { p->~T(); });
+    }
+
+    return ptr;
   }
 
   template <typename T, typename... Args>
   T* allocate(Args... args) {
-    T* ptr = reinterpret_cast<T*>(
-        pools_[get_local_cpu()].allocate(sizeof(T), alignof(T)));
-    return new (ptr) T{std::forward<Args>(args)...};
+    return allocate_on_cpu<T>(get_local_cpu(), std::forward<Args>(args)...);
   }
 
  private:
   std::vector<MemoryPool> pools_;
   // This will keep the pools from the next epoch alive until this one is
-  // destroyed. Using a mutex to allow cross-thread communication.
+  // destroyed.
   AllocatorPointer next_epoch_{nullptr};
 };
 

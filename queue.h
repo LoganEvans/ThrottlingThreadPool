@@ -33,6 +33,15 @@ class Queue {
   Queue(QueueOpts opts)
       : ht_(/*head=*/0, /*tail=*/0), buf_(next_pow_2(opts.max_size())) {}
 
+  ~Queue() {
+    while (true) {
+      auto v = pop_front();
+      if (!v.has_value()) {
+        break;
+      }
+    }
+  }
+
   void push_back(EpochPtr<T> val) {
     EpochPtr<T>* t = EpochPtr<T>::to_address(std::move(val));
 
@@ -128,7 +137,7 @@ class Queue {
       t = buf_[index].exchange(nullptr, std::memory_order::acq_rel);
     } while (!t);
 
-    auto ret = *t;
+    auto ret = std::move(*t);
     t->reset();
     return ret;
   }
@@ -162,7 +171,7 @@ class Queue {
       t = buf_[index].exchange(nullptr, std::memory_order::acq_rel);
     } while (!t);
 
-    auto ret = *t;
+    auto ret = std::move(*t);
     t->reset();
     return ret;
   }

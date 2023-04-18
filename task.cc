@@ -243,7 +243,7 @@ EpochPtr<Task> TaskQueue::wait_pop() {
 
     auto v = queue_.pop_front();
     if (v) {
-      return v.value();
+      return std::move(v.value());
     }
 
     sem_.release(1);
