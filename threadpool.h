@@ -17,12 +17,12 @@ namespace theta {
 
 class Executor;
 
-// The ScalingThreadpool can be configured to only allow running/prioritized
+// The ThrottlingThreadpool can be configured to only allow running/prioritized
 // tasks on a subset of available cores. A throttled task may run on any core.
 // When a throttled task is a candidate to be promoted to a running/prioritized
 // task, if it is running on one of the quiet cores, the scaler may use various
 // heuristics and leave it in a throttled state.
-class ScalingThreadpool {
+class ThrottlingThreadpool {
   friend class Executor;
   friend class Impl;
   using Func = Task::Func;
@@ -60,19 +60,19 @@ class ScalingThreadpool {
     std::chrono::milliseconds throttle_interval_{0};
   };
 
-  static ScalingThreadpool& getInstance();
+  static ThrottlingThreadpool& getInstance();
 
-  ~ScalingThreadpool();
+  ~ThrottlingThreadpool();
 
-  ScalingThreadpool(const ScalingThreadpool&) = delete;
-  void operator=(const ScalingThreadpool&) = delete;
+  ThrottlingThreadpool(const ThrottlingThreadpool&) = delete;
+  void operator=(const ThrottlingThreadpool&) = delete;
 
   void configure(const ConfigureOpts& opts);
 
   Executor create(Executor::Opts opts);
 
  private:
-  ScalingThreadpool();
+  ThrottlingThreadpool();
 
   void task_loop();
 

@@ -1,1 +1,1 @@
-# ScalingThreadPool
+# ThrottlingThreadPool

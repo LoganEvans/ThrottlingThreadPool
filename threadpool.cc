@@ -8,8 +8,8 @@ using namespace std::chrono_literals;
 namespace theta {
 
 /*static*/
-ScalingThreadpool::ConfigureOpts
-ScalingThreadpool::ConfigureOpts::defaultOpts() {
+ThrottlingThreadpool::ConfigureOpts
+ThrottlingThreadpool::ConfigureOpts::defaultOpts() {
   return ConfigureOpts{}
       .set_nice_cores(std::thread::hardware_concurrency() / 8)
       .set_thread_limit(8 * std::thread::hardware_concurrency())
@@ -17,19 +17,19 @@ ScalingThreadpool::ConfigureOpts::defaultOpts() {
 }
 
 /*static*/
-ScalingThreadpool& ScalingThreadpool::getInstance() {
-  static ScalingThreadpool instance;
+ThrottlingThreadpool& ThrottlingThreadpool::getInstance() {
+  static ThrottlingThreadpool instance;
   return instance;
 }
 
-void ScalingThreadpool::configure(
-    const ScalingThreadpool::ConfigureOpts& opts) {
+void ThrottlingThreadpool::configure(
+    const ThrottlingThreadpool::ConfigureOpts& opts) {
   shared_mutex_.lock();
   opts_ = opts;
   shared_mutex_.unlock();
 }
 
-Executor ScalingThreadpool::create(Executor::Opts opts) {
+Executor ThrottlingThreadpool::create(Executor::Opts opts) {
   opts.set_run_queue(&run_queue_);
   std::unique_ptr<ExecutorImpl> impl;
   if (opts.priority_policy() == PriorityPolicy::FIFO) {
@@ -49,7 +49,7 @@ Executor ScalingThreadpool::create(Executor::Opts opts) {
   return ex;
 }
 
-ScalingThreadpool::~ScalingThreadpool() {
+ThrottlingThreadpool::~ThrottlingThreadpool() {
   for (auto& worker : workers_) {
     worker->shutdown();
   }
@@ -57,7 +57,7 @@ ScalingThreadpool::~ScalingThreadpool() {
   run_queue_.unblock_workers(workers_.size());
 }
 
-ScalingThreadpool::ScalingThreadpool() {
+ThrottlingThreadpool::ThrottlingThreadpool() {
   opts_ = ConfigureOpts::defaultOpts();
 
   // TODO(lpe): Throttled and limit CPUs!

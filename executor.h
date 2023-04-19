@@ -33,7 +33,7 @@ enum class PriorityPolicy {
   ExplicitPriority,
 };
 
-class ScalingThreadpool;
+class ThrottlingThreadpool;
 class Executor;
 class FIFOExecutorImpl;
 
@@ -81,7 +81,7 @@ class ExecutorStats {
 class ExecutorOpts {
   friend class Executor;
   friend class ExecutorImpl;
-  friend class ScalingThreadpool;
+  friend class ThrottlingThreadpool;
 
  public:
   PriorityPolicy priority_policy() const { return priority_policy_; }
@@ -124,7 +124,7 @@ class ExecutorOpts {
 };
 
 class ExecutorImpl {
-  friend class ScalingThreadpool;
+  friend class ThrottlingThreadpool;
   friend class Worker;
 
  public:
@@ -172,7 +172,7 @@ class ExecutorImpl {
 
 class Executor {
  public:
-  friend class ScalingThreadpool;
+  friend class ThrottlingThreadpool;
 
   using Clock = ExecutorImpl::Clock;
   using Func = Task::Func;

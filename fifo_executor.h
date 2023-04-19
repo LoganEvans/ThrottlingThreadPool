@@ -10,7 +10,7 @@
 namespace theta {
 
 class FIFOExecutorImpl : public ExecutorImpl {
-  friend class ScalingThreadpool;
+  friend class ThrottlingThreadpool;
 
  public:
   ~FIFOExecutorImpl() override;

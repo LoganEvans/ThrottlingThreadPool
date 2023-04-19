@@ -7,7 +7,7 @@
 
 namespace theta {
 
-class ScalingThreadpool;
+class ThrottlingThreadpool;
 class Task;
 
 class Worker {

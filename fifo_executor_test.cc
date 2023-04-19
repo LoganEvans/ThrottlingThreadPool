@@ -12,7 +12,7 @@ namespace theta {
 using namespace std::chrono_literals;
 
 TEST(FIFOExecutor, ctor) {
-  Executor executor = ScalingThreadpool::getInstance().create(
+  Executor executor = ThrottlingThreadpool::getInstance().create(
       Executor::Opts{}
           .set_priority_policy(PriorityPolicy::FIFO)
           .set_thread_weight(5)
@@ -29,7 +29,7 @@ TEST(FIFOExecutor, post) {
   std::condition_variable cv;
   std::mutex mu;
 
-  Executor executor = ScalingThreadpool::getInstance().create(Executor::Opts{});
+  Executor executor = ThrottlingThreadpool::getInstance().create(Executor::Opts{});
 
   std::unique_lock<std::mutex> lock{mu};
   auto now = Executor::Clock::now();
@@ -52,7 +52,7 @@ TEST(FIFOExecutor, saturate) {
   std::condition_variable cv;
   std::mutex mu;
 
-  Executor executor = ScalingThreadpool::getInstance().create(Executor::Opts{});
+  Executor executor = ThrottlingThreadpool::getInstance().create(Executor::Opts{});
 
   std::unique_lock<std::mutex> lock{mu};
   std::mutex jobMutex;
