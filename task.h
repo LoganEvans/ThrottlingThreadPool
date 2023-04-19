@@ -27,13 +27,14 @@ class Worker;
 enum class NicePriority {
   kNone = -1,
   kThrottled = 1,
-  kRunning = 2,
+  kNormal = 2,
   kPrioritized = 3,
 };
 
 // A task wraps a Func with information about scheduling.
 //
 // States:
+// TODO(lpe): Update this comment.
 //
 //   0                      0
 //   |                      |
@@ -107,18 +108,12 @@ class Task {
   enum class State {
     kCreated = -1,
     kQueuedExecutor = 1,
-    kQueuedPrioritized = 2,
-    kQueuedThrottled = 3,
-    kQueuedNormal = 4,
-    kRunningPrioritized = 5,
-    kRunningThrottled = 6,
-    kRunningNormal = 7,
-    kFinished = 8,
+    kQueuedThreadpool = 2,
+    kRunning = 3,
+    kThrottled = 4,
+    kFinished = 5,
   };
 
-  static State nice2queued(NicePriority priority);
-  static State nice2running(NicePriority priority);
-  static State queued2running(State state);
   static bool is_running_state(Task::State state);
 
   Task(Opts opts) : opts_(opts) {}
@@ -127,7 +122,7 @@ class Task {
   operator bool() const { return opts().func() != nullptr; }
 
   State state() const;
-  void set_state(State state);
+  State set_state(State state);
 
   NicePriority nice_priority() const;
   void set_nice_priority(NicePriority priority);
@@ -141,11 +136,11 @@ class Task {
   rusage begin_ru_;
   timeval begin_tv_;
   State state_{State::kCreated};
-  NicePriority nice_priority_{NicePriority::kRunning};
+  NicePriority nice_priority_{NicePriority::kNormal};
   Worker* worker_{nullptr};
 
   State state(const std::lock_guard<std::mutex>&) const;
-  void set_state(State state, const std::lock_guard<std::mutex>&);
+  State set_state(State state, const std::lock_guard<std::mutex>&);
   void set_nice_priority(NicePriority priority,
                          const std::lock_guard<std::mutex>&);
   void run();
@@ -155,9 +150,8 @@ class TaskQueue {
  public:
   using Func = Task::Func;
 
-  TaskQueue(NicePriority nice_priority, size_t max_tasks = 512)
-      : nice_priority_(nice_priority),
-        queue_(QueueOpts{}.set_max_size(max_tasks)) {}
+  TaskQueue(size_t max_tasks = 512)
+      : queue_(QueueOpts{}.set_max_size(max_tasks)) {}
 
   void shutdown();
   bool is_shutting_down() const;
@@ -172,29 +166,13 @@ class TaskQueue {
 
   void unblock_workers(size_t n);
 
-  NicePriority nice_priority() const { return nice_priority_; }
+  size_t size() const { return queue_.size(); }
 
  private:
-  const NicePriority nice_priority_;
-
   std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
 
   Queue<Task> queue_;
   std::atomic<bool> shutdown_{false};
-};
-
-class TaskQueues {
- public:
-  TaskQueue* queue(NicePriority priority);
-
-  void shutdown();
-
-  void push(EpochPtr<Task> task);
-
- private:
-  TaskQueue throttled_queue_{NicePriority::kThrottled};
-  TaskQueue running_queue_{NicePriority::kRunning};
-  TaskQueue prioritized_queue_{NicePriority::kPrioritized};
 };
 
 }  // namespace theta

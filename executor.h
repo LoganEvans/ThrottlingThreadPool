@@ -13,6 +13,7 @@ static_assert(false);
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 #include "epoch.h"
 #include "task.h"
@@ -108,9 +109,9 @@ class ExecutorOpts {
   }
 
  protected:
-  TaskQueues* task_queues() const { return task_queues_; }
-  ExecutorOpts& set_task_queues(TaskQueues* val) {
-    task_queues_ = val;
+  TaskQueue* run_queue() const { return run_queue_; }
+  ExecutorOpts& set_run_queue(TaskQueue* val) {
+    run_queue_ = val;
     return *this;
   }
 
@@ -119,7 +120,7 @@ class ExecutorOpts {
   size_t thread_weight_{1};
   size_t worker_limit_{0};
   bool require_low_latency_{false};
-  TaskQueues* task_queues_{nullptr};
+  TaskQueue* run_queue_{nullptr};
 };
 
 class ExecutorImpl {
@@ -151,7 +152,7 @@ class ExecutorImpl {
     throw NotImplemented{};
   }
 
-  virtual EpochPtr<Task> maybe_pop() = 0;
+  virtual std::optional<EpochPtr<Task>> maybe_pop() = 0;
 
   ExecutorStats* stats() { return &stats_; }
   const ExecutorStats* stats() const { return &stats_; }
@@ -161,8 +162,8 @@ class ExecutorImpl {
 
  private:
   const Opts opts_;
-  TaskQueue executing_{NicePriority::kNone};
-  TaskQueue throttled_{NicePriority::kNone};
+  TaskQueue running_;
+  TaskQueue throttled_;
 
   ExecutorStats stats_;
 

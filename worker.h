@@ -12,7 +12,7 @@ class Task;
 
 class Worker {
  public:
-  Worker(TaskQueues* queues, NicePriority priority);
+  Worker(TaskQueue* run_queue, NicePriority priority);
   ~Worker();
 
   void shutdown();
@@ -22,7 +22,7 @@ class Worker {
   pthread_t get_pthread();
 
  private:
-  TaskQueues* queues_;
+  TaskQueue* run_queue_;
   std::atomic<NicePriority> priority_;
   std::thread thread_;
 

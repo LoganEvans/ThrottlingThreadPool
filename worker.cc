@@ -10,15 +10,15 @@
 
 namespace theta {
 
-Worker::Worker(TaskQueues* queues, NicePriority priority)
-    : queues_(queues), thread_(&Worker::run_loop, this) {
+Worker::Worker(TaskQueue* run_queue, NicePriority priority)
+    : run_queue_(run_queue), thread_(&Worker::run_loop, this) {
   set_nice_priority(priority);
 }
 
 Worker::~Worker() { thread_.join(); }
 
 void Worker::shutdown() {
-  queues_->shutdown();
+  run_queue_->shutdown();
 }
 
 NicePriority Worker::nice_priority() const {
@@ -52,15 +52,15 @@ pthread_t Worker::get_pthread() {
 
 void Worker::run_loop() {
   while (true) {
-    auto priority = nice_priority();
-    EpochPtr<Task> task = queues_->queue(priority)->wait_pop();
+    EpochPtr<Task> task = run_queue_->wait_pop();
 
     if (!task) {
-      CHECK(queues_->queue(priority)->is_shutting_down());
+      CHECK(run_queue_->is_shutting_down());
       break;
     }
 
     task->run();
+    task->set_state(Task::State::kFinished);
 
     // TODO(lpe): After finishing a task, check to see if this worker needs to
     // convert to another priority level. That will happen when the number of

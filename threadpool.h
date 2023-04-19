@@ -80,7 +80,7 @@ class ScalingThreadpool {
   ConfigureOpts opts_;
 
   std::vector<std::unique_ptr<Worker>> workers_;
-  TaskQueues queues_;
+  TaskQueue run_queue_;
 
   std::vector<std::unique_ptr<ExecutorImpl>> executors_;
 };

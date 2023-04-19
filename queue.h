@@ -42,7 +42,7 @@ class Queue {
     }
   }
 
-  void push_back(EpochPtr<T> val) {
+  std::optional<EpochPtr<T>> push_back(EpochPtr<T> val) {
     EpochPtr<T>* t = EpochPtr<T>::to_address(std::move(val));
 
     while (t) {
@@ -60,8 +60,7 @@ class Queue {
         if (tail == head) {
           // Attempt to push on a full queue. Need to wait until something is
           // popped.
-          expected = ht_.line.load(std::memory_order_acquire);
-          continue;
+          return std::move(val);
         }
       } while (!ht_.line.compare_exchange_weak(
           expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
@@ -73,9 +72,11 @@ class Queue {
       uint32_t index = HeadTail::to_tail(expected);
       t = buf_[index].exchange(t, std::memory_order::acq_rel);
     }
+
+    return {};
   }
 
-  void push_front(EpochPtr<T> val) {
+  std::optional<EpochPtr<T>> push_front(EpochPtr<T> val) {
     EpochPtr<T>* t = EpochPtr<T>::to_address(std::move(val));
 
     while (t) {
@@ -93,8 +94,7 @@ class Queue {
         if (head == tail) {
           // Attempt to push on a full queue. Need to wait until something is
           // popped.
-          expected = ht_.line.load(std::memory_order_acquire);
-          continue;
+          return std::move(val);
         }
       } while (!ht_.line.compare_exchange_weak(
           expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
@@ -106,6 +106,8 @@ class Queue {
       int32_t index = HeadTail::to_head(expected);
       t = buf_[index].exchange(t, std::memory_order::acq_rel);
     }
+
+    return {};
   }
 
   std::optional<EpochPtr<T>> pop_front() {

@@ -47,7 +47,7 @@ TEST(FIFOExecutor, post) {
 }
 
 TEST(FIFOExecutor, saturate) {
-  static constexpr int kJobs = 1;
+  static constexpr int kJobs = 10000;
 
   std::condition_variable cv;
   std::mutex mu;

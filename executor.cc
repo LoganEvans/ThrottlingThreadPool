@@ -93,16 +93,15 @@ void ExecutorImpl::refill_queues() {
 
   // Throttle a running task
   for (; running_num > running_limit; running_num--) {
-    auto optional_task = executing_.maybe_pop_back();
+    auto optional_task = running_.maybe_pop_back();
     if (!optional_task) {
       break;
     }
+    auto task = std::move(optional_task.value());
 
-    optional_task.value()->set_state(Task::State::kRunningThrottled);
-    throttled_.push_front(std::move(optional_task.value()));
+    task->set_state(Task::State::kThrottled);
+    throttled_.push_front(std::move(task));
   }
-
-  auto normal_queue = opts().task_queues()->queue(NicePriority::kRunning);
 
   // Unthrottle a running task
   for (; running_num < running_limit; running_num++) {
@@ -112,44 +111,20 @@ void ExecutorImpl::refill_queues() {
     }
     auto task = std::move(optional_task.value());
 
-    {
-      bool unthrottled = false;
-      {
-        std::lock_guard lock{task->mutex_};
-        if (task->state(lock) == Task::State::kRunningThrottled) {
-          task->set_state(Task::State::kRunningNormal, lock);
-          unthrottled = true;
-        }
-      }
-
-      if (!unthrottled) {
-        normal_queue->push(task);
-      }
-    }
-    executing_.push(std::move(task));
+    task->set_state(Task::State::kRunning);
+    running_.push(std::move(task));
   }
 
-  // Queue more tasks to run normally
+  // Queue more tasks to run
   for (; running_num < running_limit; running_num++) {
-    auto task = maybe_pop();
-    if (!task) {
+    auto optional_task = maybe_pop();
+    if (!optional_task) {
       return;
     }
-    executing_.push(task);
-    normal_queue->push(std::move(task));
-  }
+    auto task = std::move(optional_task.value());
 
-  // Queue more tasks to run throttled
-  int throttled_limit = throttled_worker_limit();
-  auto throttled_queue = opts().task_queues()->queue(NicePriority::kThrottled);
-  for (int throttled_num = stats()->throttled_num();
-       throttled_num < throttled_limit; throttled_num++) {
-    auto task = maybe_pop();
-    if (!task) {
-      return;
-    }
-    throttled_.push(task);
-    throttled_queue->push(std::move(task));
+    task->set_state(Task::State::kQueuedThreadpool);
+    opts().run_queue()->push(std::move(task));
   }
 }
 

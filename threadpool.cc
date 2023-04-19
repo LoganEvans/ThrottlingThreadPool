@@ -12,7 +12,7 @@ ScalingThreadpool::ConfigureOpts
 ScalingThreadpool::ConfigureOpts::defaultOpts() {
   return ConfigureOpts{}
       .set_nice_cores(std::thread::hardware_concurrency() / 8)
-      .set_thread_limit(1)//8 * std::thread::hardware_concurrency())
+      .set_thread_limit(8 * std::thread::hardware_concurrency())
       .set_throttle_interval(100ms);
 }
 
@@ -30,7 +30,7 @@ void ScalingThreadpool::configure(
 }
 
 Executor ScalingThreadpool::create(Executor::Opts opts) {
-  opts.set_task_queues(&queues_);
+  opts.set_run_queue(&run_queue_);
   std::unique_ptr<ExecutorImpl> impl;
   if (opts.priority_policy() == PriorityPolicy::FIFO) {
     impl = std::unique_ptr<FIFOExecutorImpl>(
@@ -54,11 +54,7 @@ ScalingThreadpool::~ScalingThreadpool() {
     worker->shutdown();
   }
 
-  for (auto prio : std::to_array({NicePriority::kThrottled,
-                                  NicePriority::kRunning,
-                                  NicePriority::kPrioritized})) {
-    queues_.queue(prio)->unblock_workers(workers_.size());
-  }
+  run_queue_.unblock_workers(workers_.size());
 }
 
 ScalingThreadpool::ScalingThreadpool() {
@@ -68,7 +64,7 @@ ScalingThreadpool::ScalingThreadpool() {
   workers_.reserve(opts_.thread_limit());
   for (size_t i = 0; i < opts_.thread_limit(); i++) {
     workers_.push_back(
-        std::make_unique<Worker>(&queues_, NicePriority::kRunning));
+        std::make_unique<Worker>(&run_queue_, NicePriority::kNormal));
   }
 }
 }  // namespace theta
