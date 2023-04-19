@@ -60,7 +60,7 @@ class Queue {
         if (tail == head) {
           // Attempt to push on a full queue. Need to wait until something is
           // popped.
-          return std::move(val);
+          return std::move(*t);
         }
       } while (!ht_.line.compare_exchange_weak(
           expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
@@ -94,7 +94,7 @@ class Queue {
         if (head == tail) {
           // Attempt to push on a full queue. Need to wait until something is
           // popped.
-          return std::move(val);
+          return std::move(*t);
         }
       } while (!ht_.line.compare_exchange_weak(
           expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),

@@ -60,7 +60,6 @@ void Worker::run_loop() {
     }
 
     task->run();
-    task->set_state(Task::State::kFinished);
 
     // TODO(lpe): After finishing a task, check to see if this worker needs to
     // convert to another priority level. That will happen when the number of

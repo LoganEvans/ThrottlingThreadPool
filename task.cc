@@ -107,11 +107,7 @@ void Task::set_nice_priority(NicePriority priority,
 }
 
 void Task::run() {
-  {
-    std::lock_guard lock{mutex_};
-    set_state(State::kRunning, lock);
-  }
-
+  set_state(State::kRunning);
   opts().func()();
   set_state(State::kFinished);
 }
