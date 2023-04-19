@@ -14,6 +14,7 @@ build:asan --copt -DADDRESS_SANITIZER
 build:asan --copt -O1
 build:asan --copt -g
 build:asan --copt -fno-omit-frame-pointer
+build:asan --copt -DDEBUG
 build:asan --linkopt -fsanitize=address
 
 build:tsan --strip=never

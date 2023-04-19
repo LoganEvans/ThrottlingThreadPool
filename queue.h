@@ -188,6 +188,8 @@ class Queue {
     return head - tail;
   }
 
+  size_t capacity() const { return buf_.size() - 1; }
+
  private:
   union HeadTail {
     static constexpr uint64_t to_line(uint32_t head, uint32_t tail) {

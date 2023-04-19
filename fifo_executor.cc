@@ -36,6 +36,20 @@ std::optional<EpochPtr<Task>> FIFOExecutorImpl::maybe_pop() {
 
   auto p = std::move(queue_.front());
   queue_.pop();
+
+  // Refill the fast queue halfway.
+  for (size_t i = 0; i < fast_queue_.capacity() / 2; i++) {
+    if (queue_.empty()) {
+      break;
+    }
+    auto optional_task = fast_queue_.push_back(std::move(queue_.front()));
+    if (optional_task.has_value()) {
+      queue_.front() = std::move(optional_task.value());
+      break;
+    }
+    queue_.pop();
+  }
+
   return p;
 }
 

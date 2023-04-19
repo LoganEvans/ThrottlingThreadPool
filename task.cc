@@ -36,6 +36,9 @@ Task::State Task::set_state(State state, const std::lock_guard<std::mutex>&) {
     }
   } else if (old == State::kQueuedExecutor) {
     if (state == State::kQueuedThreadpool) {
+    } else if (state == State::kRunning) {
+      stats->waiting_delta(-1);
+      stats->running_delta(1);
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
@@ -107,9 +110,7 @@ void Task::set_nice_priority(NicePriority priority,
 }
 
 void Task::run() {
-  set_state(State::kRunning);
   opts().func()();
-  set_state(State::kFinished);
 }
 
 void TaskQueue::shutdown() {

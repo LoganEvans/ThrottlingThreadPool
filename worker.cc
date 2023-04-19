@@ -51,22 +51,40 @@ pthread_t Worker::get_pthread() {
 }
 
 void Worker::run_loop() {
+  auto task = run_queue_->wait_pop();
+  if (!task) {
+    CHECK(run_queue_->is_shutting_down());
+    return;
+  }
+  task->set_state(Task::State::kRunning);
+
   while (true) {
-    EpochPtr<Task> task = run_queue_->wait_pop();
+    task->run();
+    task->set_state(Task::State::kFinished);
+
+    // Avoid a context switch if possible by taking the next available task
+    int running_num = task->opts().executor()->stats()->running_num();
+    int running_limit = task->opts().executor()->stats()->running_limit();
+
+    if (running_num < running_limit) {
+      auto optional_task = task->opts().executor()->maybe_pop();
+      if (optional_task) {
+        task = std::move(optional_task.value());
+      } else {
+        task = nullptr;
+      }
+    }
+
+    if (!task) {
+      task = run_queue_->wait_pop();
+    }
 
     if (!task) {
       CHECK(run_queue_->is_shutting_down());
       break;
     }
 
-    task->run();
-
-    // TODO(lpe): After finishing a task, check to see if this worker needs to
-    // convert to another priority level. That will happen when the number of
-    // workers at certain priority are out of balance due to a task being
-    // throttled or promotted while running.
-
-    // TODO(lpe): Set high priority for refilling the queues?
+    task->set_state(Task::State::kRunning);
     task->opts().executor()->refill_queues();
   }
 }

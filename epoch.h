@@ -65,6 +65,7 @@ class alignas(sizeof(__int128)) MemoryPool {
         data = d_;
         if (old_page == data.page.load(std::memory_order_relaxed)) {
           old_pages_.push_back(old_page);
+          num_old_pages_.fetch_add(1, std::memory_order_relaxed);
           data.page.store(new Page, std::memory_order_relaxed);
           data.offset.store(0, std::memory_order_relaxed);
           d_.line.store(data.line.load(std::memory_order_relaxed),
@@ -84,8 +85,20 @@ class alignas(sizeof(__int128)) MemoryPool {
   }
 
   void defer_dtor(std::function<void()> dtor) {
+    // TODO(lpe): asan wants all calls to placement new to be paired with a
+    // call to placement delete, which is what this function would do. However,
+    // since the memory is in a bump allocator, that's not always necessary.
+    // The Task object, which has a mutex member, is not trivially
+    // destructible, so asan wants to see a placement delete. Unfortunately,
+    // doing this is over a 10% performance degredation.
+#if defined(DEBUG)
     std::lock_guard lock{mutex_};
     dtors_.push_back(dtor);
+#endif
+  }
+
+  int num_pages() const {
+    return 1 + num_old_pages_.load(std::memory_order_acquire);
   }
 
  private:
@@ -112,6 +125,7 @@ class alignas(sizeof(__int128)) MemoryPool {
     }
   } d_;
 
+  std::atomic<int> num_old_pages_{0};
   std::mutex mutex_;
   std::list<Page*> old_pages_;
   std::list<std::function<void()>> dtors_;
@@ -162,12 +176,14 @@ class Epoch {
  private:
   static Epoch& get_instance();
 
+  std::atomic<int> epoch_number_{0};
   hsp::KeepAlive<CPULocalMemoryPools> pools_{nullptr};
   std::mutex mutex_;
 
   Epoch() : pools_(new CPULocalMemoryPools{}) {}
 
   void new_epoch_impl();
+  void new_epoch_impl(const std::lock_guard<std::mutex>&);
 };
 
 template <typename T>
