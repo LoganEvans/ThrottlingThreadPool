@@ -58,6 +58,8 @@ class ExecutorStats {
   int running_limit() const;
   void set_running_limit(int val);
 
+  bool running_num_is_at_limit() const;
+
   double ema_usage_proportion() const;
   void update_ema_usage_proportion(struct rusage* begin_ru,
                                    struct timeval* begin_tv,
@@ -84,6 +86,8 @@ class ExecutorOpts {
   friend class ThrottlingThreadpool;
 
  public:
+  static constexpr size_t kNoWorkerLimit = 0;
+
   PriorityPolicy priority_policy() const { return priority_policy_; }
   ExecutorOpts& set_priority_policy(PriorityPolicy val) {
     priority_policy_ = val;

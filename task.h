@@ -18,6 +18,7 @@ static_assert(false);
 
 #include "epoch.h"
 #include "queue.h"
+#include "semaphore.h"
 
 namespace theta {
 
@@ -169,7 +170,7 @@ class TaskQueue {
   size_t size() const { return queue_.size(); }
 
  private:
-  std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
+  Semaphore sem_;
 
   Queue<Task> queue_;
   std::atomic<bool> shutdown_{false};

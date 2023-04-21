@@ -144,7 +144,6 @@ std::optional<EpochPtr<Task>> TaskQueue::maybe_pop() {
   }
 
   auto v = queue_.pop_front();
-  CHECK(v.has_value());
   return v;
 }
 

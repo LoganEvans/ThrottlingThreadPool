@@ -75,12 +75,14 @@ cc_library(
   srcs = ["task.cc"],
   hdrs = [
     "executor.h",
+    "semaphore.h",
     "task.h",
   ],
   deps = [
     "@com_google_glog//:glog",
     ":epoch",
     ":queue",
+    ":semaphore",
     ":worker",
   ],
   copts = COPTS,
@@ -92,6 +94,7 @@ cc_library(
   srcs = ["worker.cc"],
   hdrs = [
     "executor.h",
+    "semaphore.h",
     "task.h",
     "worker.h",
   ],
@@ -149,6 +152,26 @@ cc_test(
   srcs = ["fifo_executor_test.cc"],
   deps = [
     ":threadpool",
+    "@gtest//:gtest",
+    "@gtest//:gtest_main",
+    "@com_google_glog//:glog",
+  ],
+  copts = COPTS,
+  size = "small",
+)
+
+cc_library(
+  name = "semaphore",
+  srcs = ["semaphore.cc"],
+  hdrs = ["semaphore.h"],
+  copts = COPTS,
+)
+
+cc_test(
+  name = "semaphore_test",
+  srcs = ["semaphore_test.cc"],
+  deps = [
+    ":semaphore",
     "@gtest//:gtest",
     "@gtest//:gtest_main",
     "@com_google_glog//:glog",

@@ -1,8 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <optional>
 #include <thread>
 
+#include "epoch.h"
 #include "task.h"
 
 namespace theta {

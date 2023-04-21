@@ -62,20 +62,22 @@ void Worker::run_loop() {
     task->run();
     task->set_state(Task::State::kFinished);
 
-    // Avoid a context switch if possible by taking the next available task
-    int running_num = task->opts().executor()->stats()->running_num();
-    int running_limit = task->opts().executor()->stats()->running_limit();
+    // Avoid a context switch if possible by taking the next available task.
+    // TODO(lpe): This has an order inversion that leads to a 4x speedup. The
+    // next task to execute *should* be from the run queue, but prioritizing
+    // taking a task from the executor leads to locality benefits, and also
+    // avoids touching the semaphore, which seems to be the source of the
+    // slowdown.
 
-    if (running_num < running_limit) {
-      auto optional_task = task->opts().executor()->maybe_pop();
-      if (optional_task) {
-        task = std::move(optional_task.value());
-      } else {
-        task = nullptr;
-      }
+    std::optional<EpochPtr<Task>> optional_task = run_queue_->maybe_pop();
+    if (!optional_task &&
+        !task->opts().executor()->stats()->running_num_is_at_limit()) {
+      optional_task = task->opts().executor()->maybe_pop();
     }
 
-    if (!task) {
+    if (optional_task) {
+      task = std::move(optional_task.value());
+    } else {
       task = run_queue_->wait_pop();
     }
 

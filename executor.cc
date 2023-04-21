@@ -46,6 +46,10 @@ void ExecutorStats::set_running_limit(int val) {
   running_limit_.store(val, std::memory_order_relaxed);
 }
 
+bool ExecutorStats::running_num_is_at_limit() const {
+  return running_num() >= running_limit();
+}
+
 double ExecutorStats::ema_usage_proportion() const {
   return ema_usage_proportion_.load(std::memory_order_relaxed);
 }
@@ -97,6 +101,7 @@ void ExecutorImpl::refill_queues() {
     if (!optional_task) {
       break;
     }
+    //fprintf(stderr, "throttle\n");
     auto task = std::move(optional_task.value());
 
     task->set_state(Task::State::kThrottled);
@@ -109,6 +114,7 @@ void ExecutorImpl::refill_queues() {
     if (!optional_task) {
       break;
     }
+    //fprintf(stderr, "unthrottle\n");
     auto task = std::move(optional_task.value());
 
     task->set_state(Task::State::kRunning);
@@ -117,6 +123,8 @@ void ExecutorImpl::refill_queues() {
 
   // Queue more tasks to run
   for (; running_num < running_limit; running_num++) {
+    //fprintf(stderr, "running_num: %d, running_limit: %d, queue size: %zu\n",
+    //        running_num, running_limit, opts().run_queue()->size());
     auto optional_task = maybe_pop();
     if (!optional_task) {
       return;
