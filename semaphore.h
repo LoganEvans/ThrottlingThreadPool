@@ -31,7 +31,6 @@ class Semaphore {
     while (!try_acquire()) {
       d_.waiters.fetch_add(1, std::memory_order::acq_rel);
       sem_.acquire();
-      d_.waiters.fetch_sub(1, std::memory_order::acq_rel);
     }
   }
 

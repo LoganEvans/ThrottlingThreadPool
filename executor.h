@@ -130,6 +130,7 @@ class ExecutorOpts {
 class ExecutorImpl {
   friend class ThrottlingThreadpool;
   friend class Worker;
+  friend class Task;
 
  public:
   using Func = Task::Func;
@@ -166,8 +167,8 @@ class ExecutorImpl {
 
  private:
   const Opts opts_;
-  TaskQueue running_;
-  TaskQueue throttled_;
+  Queue<Task> running_{QueueOpts{}};
+  Queue<Task> throttled_{QueueOpts{}};
 
   ExecutorStats stats_;
 

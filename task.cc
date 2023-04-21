@@ -21,9 +21,15 @@ Task::State Task::set_state(State state) {
 }
 
 Task::State Task::set_state(State state, const std::lock_guard<std::mutex>&) {
+  if (state != State::kQueuedExecutor) {
+    fprintf(stderr, "> Task::set_state(%d) -- from %d\n", state, state_);
+  }
   State old = state_;
   auto* executor = opts().executor();
   auto* stats = executor->stats();
+
+  // TODO(lpe): This will also need to handle attempts to set kRunning or
+  // kThrottled while in state kFinished.
 
   if (old == State::kCreated) {
     if (state == State::kQueuedExecutor) {
@@ -36,20 +42,26 @@ Task::State Task::set_state(State state, const std::lock_guard<std::mutex>&) {
     }
   } else if (old == State::kQueuedExecutor) {
     if (state == State::kQueuedThreadpool) {
-    } else if (state == State::kRunning) {
-      stats->waiting_delta(-1);
-      stats->running_delta(1);
+    } else if (state == State::kPrepping) {
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
     }
   } else if (old == State::kQueuedThreadpool) {
+    if (state == State::kPrepping) {
+    } else {
+      CHECK(false) << "Illegal transition from " << static_cast<int>(old)
+                   << " to " << static_cast<int>(state);
+    }
+  } else if (old == State::kPrepping) {
     if (state == State::kRunning) {
       stats->waiting_delta(-1);
       stats->running_delta(1);
+      worker_->set_nice_priority(opts().nice_priority());
     } else if (state == State::kThrottled) {
       stats->waiting_delta(-1);
       stats->throttled_delta(1);
+      worker_->set_nice_priority(NicePriority::kThrottled);
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
@@ -64,10 +76,13 @@ Task::State Task::set_state(State state, const std::lock_guard<std::mutex>&) {
     if (state == State::kThrottled) {
       stats->running_delta(-1);
       stats->throttled_delta(1);
+      worker_->set_nice_priority(NicePriority::kThrottled);
     } else if (state == State::kFinished) {
       stats->running_delta(-1);
       stats->finished_delta(1);
       state_ = State::kFinished;
+      worker_->set_nice_priority(NicePriority::kNormal);
+      worker_ = nullptr;
       return state_;
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
@@ -77,10 +92,13 @@ Task::State Task::set_state(State state, const std::lock_guard<std::mutex>&) {
     if (state == State::kRunning) {
       stats->throttled_delta(-1);
       stats->running_delta(1);
+      worker_->set_nice_priority(opts().nice_priority());
     } else if (state == State::kFinished) {
       stats->throttled_delta(-1);
       stats->finished_delta(1);
       state_ = State::kFinished;
+      worker_->set_nice_priority(NicePriority::kNormal);
+      worker_ = nullptr;
       return state_;
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
@@ -89,28 +107,27 @@ Task::State Task::set_state(State state, const std::lock_guard<std::mutex>&) {
   }
 
   state_ = state;
+  if (state != State::kQueuedExecutor) {
+    fprintf(stderr, "< Task::set_state(%d)\n", state);
+  }
   return state;
 }
 
-NicePriority Task::nice_priority() const {
-  std::lock_guard lock{mutex_};
-  return nice_priority_;
-}
+void Task::run(EpochPtr<Task> task) {
+  fprintf(stderr, "> Task::run()\n");
+  DCHECK(this == task.operator->());
 
-void Task::set_nice_priority(NicePriority priority) {
-  std::lock_guard lock{mutex_};
-  set_nice_priority(priority, lock);
-}
+  auto* executor = opts().executor();
+  if (executor->stats()->running_num_is_at_limit()) {
+    set_state(State::kThrottled);
+    executor->running_.push_back(std::move(task));
+  } else {
+    set_state(State::kRunning);
+    executor->throttled_.push_back(std::move(task));
+  }
 
-void Task::set_nice_priority(NicePriority priority,
-                             const std::lock_guard<std::mutex>&) {
-  nice_priority_ = priority;
-
-  // TODO(lpe): If there's a worker, possibly change the worker run state.
-}
-
-void Task::run() {
   opts().func()();
+  fprintf(stderr, "< Task::run()\n");
 }
 
 void TaskQueue::shutdown() {

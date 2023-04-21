@@ -97,7 +97,7 @@ void ExecutorImpl::refill_queues() {
 
   // Throttle a running task
   for (; running_num > running_limit; running_num--) {
-    auto optional_task = running_.maybe_pop_back();
+    auto optional_task = running_.pop_back();
     if (!optional_task) {
       break;
     }
@@ -110,7 +110,7 @@ void ExecutorImpl::refill_queues() {
 
   // Unthrottle a running task
   for (; running_num < running_limit; running_num++) {
-    auto optional_task = throttled_.maybe_pop();
+    auto optional_task = throttled_.pop_front();
     if (!optional_task) {
       break;
     }
@@ -118,7 +118,7 @@ void ExecutorImpl::refill_queues() {
     auto task = std::move(optional_task.value());
 
     task->set_state(Task::State::kRunning);
-    running_.push(std::move(task));
+    running_.push_front(std::move(task));
   }
 
   // Queue more tasks to run

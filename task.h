@@ -101,18 +101,26 @@ class Task {
       return *this;
     }
 
+    NicePriority nice_priority() const { return nice_priority_; }
+    Opts& set_nice_priority(NicePriority val) {
+      nice_priority_ = val;
+      return *this;
+    }
+
    private:
     Func func_{nullptr};
     ExecutorImpl* executor_{nullptr};
+    NicePriority nice_priority_{NicePriority::kNormal};
   };
 
   enum class State {
     kCreated = -1,
     kQueuedExecutor = 1,
     kQueuedThreadpool = 2,
-    kRunning = 3,
-    kThrottled = 4,
-    kFinished = 5,
+    kPrepping = 3,
+    kRunning = 4,
+    kThrottled = 5,
+    kFinished = 6,
   };
 
   static bool is_running_state(Task::State state);
@@ -124,9 +132,6 @@ class Task {
 
   State state() const;
   State set_state(State state);
-
-  NicePriority nice_priority() const;
-  void set_nice_priority(NicePriority priority);
 
   Worker* worker() const { return worker_; }
   void set_worker(Worker* val) { worker_ = val; }
@@ -142,9 +147,7 @@ class Task {
 
   State state(const std::lock_guard<std::mutex>&) const;
   State set_state(State state, const std::lock_guard<std::mutex>&);
-  void set_nice_priority(NicePriority priority,
-                         const std::lock_guard<std::mutex>&);
-  void run();
+  void run(EpochPtr<Task> task);
 };
 
 class TaskQueue {

@@ -28,7 +28,16 @@ NicePriority Worker::nice_priority() const {
 void Worker::set_nice_priority(NicePriority priority) {
   static int sched_policy = sched_getscheduler(getpid());
 
-  priority_.store(priority, std::memory_order_release);
+  if (priority_.load(std::memory_order::acquire) == priority) {
+    return;
+  }
+
+  std::lock_guard lock{priority_mutex_};
+
+  auto old_priority = priority_.exchange(priority, std::memory_order::acq_rel);
+  if (old_priority == priority) {
+    return;
+  }
 
   sched_param param;
   switch (priority) {
@@ -56,11 +65,12 @@ void Worker::run_loop() {
     CHECK(run_queue_->is_shutting_down());
     return;
   }
-  task->set_state(Task::State::kRunning);
+  fprintf(stderr, "running!\n");
+  task->set_state(Task::State::kPrepping);
 
   while (true) {
-    task->run();
-    task->set_state(Task::State::kFinished);
+    task->set_worker(this);
+    task->run(task);
 
     // Avoid a context switch if possible by taking the next available task.
     std::optional<EpochPtr<Task>> optional_task = run_queue_->maybe_pop();
@@ -80,7 +90,7 @@ void Worker::run_loop() {
       break;
     }
 
-    task->set_state(Task::State::kRunning);
+    task->set_state(Task::State::kPrepping);
     task->opts().executor()->refill_queues();
   }
 }

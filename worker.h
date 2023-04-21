@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -25,6 +26,7 @@ class Worker {
 
  private:
   TaskQueue* run_queue_;
+  std::mutex priority_mutex_;
   std::atomic<NicePriority> priority_;
   std::thread thread_;
 
