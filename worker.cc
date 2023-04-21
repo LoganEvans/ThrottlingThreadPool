@@ -63,12 +63,6 @@ void Worker::run_loop() {
     task->set_state(Task::State::kFinished);
 
     // Avoid a context switch if possible by taking the next available task.
-    // TODO(lpe): This has an order inversion that leads to a 4x speedup. The
-    // next task to execute *should* be from the run queue, but prioritizing
-    // taking a task from the executor leads to locality benefits, and also
-    // avoids touching the semaphore, which seems to be the source of the
-    // slowdown.
-
     std::optional<EpochPtr<Task>> optional_task = run_queue_->maybe_pop();
     if (!optional_task &&
         !task->opts().executor()->stats()->running_num_is_at_limit()) {
