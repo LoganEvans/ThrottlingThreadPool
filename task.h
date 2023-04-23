@@ -8,6 +8,7 @@ static_assert(false);
 #include <sys/resource.h>
 #include <sys/time.h>
 
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -31,6 +32,8 @@ enum class NicePriority {
   kNormal = 2,
   kPrioritized = 3,
 };
+
+class ThrottleList;
 
 // A task wraps a Func with information about scheduling.
 //
@@ -83,6 +86,7 @@ enum class NicePriority {
 class Task {
   friend class ExecutorImpl;
   friend class Worker;
+  friend class ThrottleList;
 
  public:
   using Func = std::function<void()>;
@@ -145,6 +149,10 @@ class Task {
   NicePriority nice_priority_{NicePriority::kNormal};
   Worker* worker_{nullptr};
 
+  std::shared_ptr<Task> prev_{nullptr};
+  std::shared_ptr<Task> next_{nullptr};
+  ThrottleList* throttle_list_{nullptr};
+
   State state(const std::lock_guard<std::mutex>&) const;
   State set_state(State state, const std::lock_guard<std::mutex>&);
   void run(EpochPtr<Task> task);
@@ -177,6 +185,22 @@ class TaskQueue {
 
   Queue<Task> queue_;
   std::atomic<bool> shutdown_{false};
+};
+
+class ThrottleList {
+ public:
+  ThrottleList();
+
+  void append(std::shared_ptr<Task> task);
+  void remove(std::shared_ptr<Task> task);
+
+  void throttle_one();
+  void unthrottle_one();
+
+ private:
+  const std::shared_ptr<Task> head_;
+  const std::shared_ptr<Task> tail_;
+  std::shared_ptr<Task> throttle_head_;
 };
 
 }  // namespace theta

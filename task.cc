@@ -21,15 +21,9 @@ Task::State Task::set_state(State state) {
 }
 
 Task::State Task::set_state(State state, const std::lock_guard<std::mutex>&) {
-  if (state != State::kQueuedExecutor) {
-    fprintf(stderr, "> Task::set_state(%d) -- from %d\n", state, state_);
-  }
   State old = state_;
   auto* executor = opts().executor();
   auto* stats = executor->stats();
-
-  // TODO(lpe): This will also need to handle attempts to set kRunning or
-  // kThrottled while in state kFinished.
 
   if (old == State::kCreated) {
     if (state == State::kQueuedExecutor) {
@@ -104,17 +98,18 @@ Task::State Task::set_state(State state, const std::lock_guard<std::mutex>&) {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
     }
+  } else if (old == State::kFinished) {
+    return State::kFinished;
+  } else {
+    CHECK(false) << "Illegal transition from " << static_cast<int>(old)
+                 << " to " << static_cast<int>(state);
   }
 
   state_ = state;
-  if (state != State::kQueuedExecutor) {
-    fprintf(stderr, "< Task::set_state(%d)\n", state);
-  }
   return state;
 }
 
 void Task::run(EpochPtr<Task> task) {
-  fprintf(stderr, "> Task::run()\n");
   DCHECK(this == task.operator->());
 
   auto* executor = opts().executor();
@@ -127,7 +122,7 @@ void Task::run(EpochPtr<Task> task) {
   }
 
   opts().func()();
-  fprintf(stderr, "< Task::run()\n");
+  set_state(State::kFinished);
 }
 
 void TaskQueue::shutdown() {
@@ -191,5 +186,153 @@ std::optional<EpochPtr<Task>> TaskQueue::maybe_pop_back() {
 }
 
 void TaskQueue::unblock_workers(size_t n) { sem_.release(n); }
+
+ThrottleList::ThrottleList()
+    : head_(new Task{Task::Opts{}}),
+      tail_(new Task{Task::Opts{}}),
+      throttle_head_(tail_) {
+  std::scoped_lock lock{head_->mutex_, tail_->mutex_};
+  head_->next_ = tail_;
+  tail_->prev_ = head_;
+}
+
+void ThrottleList::append(std::shared_ptr<Task> task) {
+  while (true) {
+    std::shared_ptr<Task> prev{nullptr};
+
+    {
+      std::lock_guard l{tail_->mutex_};
+      prev = tail_->prev_;
+    }
+
+    std::lock(prev->mutex_, task->mutex_, tail_->mutex_);
+
+    if (tail_->prev_ != prev) {
+      continue;
+    }
+
+    task->prev_ = prev;
+    task->next_ = tail_;
+
+    prev->next_ = task;
+    tail_->prev_ = task;
+
+    std::unique_lock prev_lock(prev->mutex_, std::adopt_lock);
+    std::unique_lock tail_lock(task->mutex_, std::adopt_lock);
+    prev_lock.unlock();
+    tail_lock.unlock();
+
+    std::lock_guard<std::mutex> lock{task->mutex_, std::adopt_lock};
+    if (std::atomic_load_explicit(&throttle_head_,
+                                  std::memory_order::acquire) == tail_) {
+      task->set_state(Task::State::kRunning, lock);
+    } else {
+      task->set_state(Task::State::kThrottled, lock);
+    }
+  }
+}
+
+void ThrottleList::remove(std::shared_ptr<Task> task) {
+  while (true) {
+    std::shared_ptr<Task> prev{nullptr};
+    std::shared_ptr<Task> next{nullptr};
+
+    {
+      std::lock_guard l{task->mutex_};
+      prev = task->prev_;
+      next = task->next_;
+    }
+
+    std::scoped_lock lock{prev->mutex_, task->mutex_, next->mutex_};
+    if (task->prev_ != prev || task->next_ != next) {
+      continue;
+    }
+
+    if (std::atomic_load_explicit(&throttle_head_,
+                                  std::memory_order::acquire) == task) {
+      std::atomic_store_explicit(&throttle_head_, next,
+                                 std::memory_order::release);
+    }
+
+    prev->next_ = std::move(next);
+    next->prev_ = std::move(prev);
+  }
+}
+
+void ThrottleList::throttle_one() {
+  while (true) {
+    std::shared_ptr<Task> prev{nullptr};
+    std::shared_ptr<Task> thead =
+        std::atomic_load_explicit(&throttle_head_, std::memory_order::acquire);
+
+    if (thead == head_) {
+      return;
+    }
+
+    {
+      std::lock_guard l{thead->mutex_};
+
+      if (std::atomic_load_explicit(&throttle_head_,
+                                    std::memory_order::acquire) != thead) {
+        continue;
+      }
+
+      prev = thead->prev_;
+    }
+
+    std::lock(thead->mutex_, prev->mutex_);
+    if (std::atomic_load_explicit(&throttle_head_,
+                                  std::memory_order::acquire) != thead ||
+        thead->prev_ != prev) {
+      continue;
+    }
+
+    std::atomic_store_explicit(&throttle_head_, prev,
+                               std::memory_order::release);
+    std::unique_lock lock{thead->mutex_, std::adopt_lock};
+    lock.unlock();
+
+    std::lock_guard<std::mutex> prev_lock{prev->mutex_, std::adopt_lock};
+    prev->set_state(Task::State::kRunning, prev_lock);
+  }
+}
+
+void ThrottleList::unthrottle_one() {
+  while (true) {
+    std::shared_ptr<Task> next{nullptr};
+    std::shared_ptr<Task> thead =
+        std::atomic_load_explicit(&throttle_head_, std::memory_order::acquire);
+
+    if (thead == tail_) {
+      return;
+    }
+
+    {
+      std::lock_guard l{thead->mutex_};
+
+      if (std::atomic_load_explicit(&throttle_head_,
+                                    std::memory_order::acquire) != thead) {
+        continue;
+      }
+
+      next = thead->next_;
+    }
+
+    std::lock(thead->mutex_, next->mutex_);
+    if (std::atomic_load_explicit(&throttle_head_,
+                                  std::memory_order::acquire) != thead ||
+        thead->next_ != next) {
+      continue;
+    }
+
+    std::atomic_store_explicit(&throttle_head_, next,
+                               std::memory_order::release);
+    std::unique_lock next_lock{next->mutex_, std::adopt_lock};
+    next_lock.unlock();
+
+    std::lock_guard<std::mutex> lock{thead->mutex_, std::adopt_lock};
+    thead->set_state(Task::State::kRunning, lock);
+  }
+}
 
 }  // namespace theta

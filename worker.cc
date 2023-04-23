@@ -65,12 +65,13 @@ void Worker::run_loop() {
     CHECK(run_queue_->is_shutting_down());
     return;
   }
-  fprintf(stderr, "running!\n");
   task->set_state(Task::State::kPrepping);
 
   while (true) {
     task->set_worker(this);
     task->run(task);
+
+    task->opts().executor()->refill_queues();
 
     // Avoid a context switch if possible by taking the next available task.
     std::optional<EpochPtr<Task>> optional_task = run_queue_->maybe_pop();
@@ -91,7 +92,6 @@ void Worker::run_loop() {
     }
 
     task->set_state(Task::State::kPrepping);
-    task->opts().executor()->refill_queues();
   }
 }
 
