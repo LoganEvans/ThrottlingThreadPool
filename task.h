@@ -120,10 +120,9 @@ class Task {
     kCreated = -1,
     kQueuedExecutor = 1,
     kQueuedThreadpool = 2,
-    kPrepping = 3, // TODO(lpe): Remove.
-    kRunning = 4,
-    kThrottled = 5,
-    kFinished = 6,
+    kRunning = 3,
+    kThrottled = 4,
+    kFinished = 5,
   };
 
   static bool is_running_state(Task::State state);
@@ -154,8 +153,8 @@ class Task {
   std::shared_ptr<Task> next_{nullptr};
   ThrottleList* throttle_list_{nullptr};
 
-  State state(const std::lock_guard<std::mutex>&) const;
-  State set_state(State state, const std::lock_guard<std::mutex>&);
+  State state(const std::unique_lock<std::mutex>&) const;
+  State set_state(State state, const std::unique_lock<std::mutex>&);
 };
 
 class TaskQueue {
@@ -172,8 +171,6 @@ class TaskQueue {
 
   std::unique_ptr<Task> maybe_pop();
   std::unique_ptr<Task> wait_pop();
-
-  void unblock_workers(size_t n);
 
   size_t size() const { return queue_.size(); }
 

@@ -14,7 +14,7 @@ class Task;
 
 class Worker {
  public:
-  Worker(TaskQueue* run_queue, NicePriority priority);
+  Worker(TaskQueue* run_queue);
   ~Worker();
 
   void shutdown();
@@ -26,7 +26,7 @@ class Worker {
  private:
   TaskQueue* run_queue_;
   std::mutex priority_mutex_;
-  std::atomic<NicePriority> priority_;
+  std::atomic<NicePriority> priority_{NicePriority::kNormal};
   std::thread thread_;
 
   void run_loop();

@@ -54,17 +54,15 @@ ThrottlingThreadpool::~ThrottlingThreadpool() {
     worker->shutdown();
   }
 
-  run_queue_.unblock_workers(workers_.size());
+  run_queue_.shutdown();
 }
 
 ThrottlingThreadpool::ThrottlingThreadpool() {
   opts_ = ConfigureOpts::defaultOpts();
 
-  // TODO(lpe): Throttled and limit CPUs!
   workers_.reserve(opts_.thread_limit());
   for (size_t i = 0; i < opts_.thread_limit(); i++) {
-    workers_.push_back(
-        std::make_unique<Worker>(&run_queue_, NicePriority::kNormal));
+    workers_.push_back(std::make_unique<Worker>(&run_queue_));
   }
 }
 }  // namespace theta

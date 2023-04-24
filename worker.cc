@@ -9,10 +9,8 @@
 
 namespace theta {
 
-Worker::Worker(TaskQueue* run_queue, NicePriority priority)
-    : run_queue_(run_queue), thread_(&Worker::run_loop, this) {
-  set_nice_priority(priority);
-}
+Worker::Worker(TaskQueue* run_queue)
+    : run_queue_(run_queue), thread_(&Worker::run_loop, this) {}
 
 Worker::~Worker() { thread_.join(); }
 
@@ -65,7 +63,6 @@ void Worker::run_loop() {
       CHECK(run_queue_->is_shutting_down());
       return;
     }
-    task->set_state(Task::State::kPrepping);
 
     auto* executor = task->opts().executor();
     task->set_worker(this);
