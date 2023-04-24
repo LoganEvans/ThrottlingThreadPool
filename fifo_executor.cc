@@ -9,32 +9,31 @@ namespace theta {
 FIFOExecutorImpl::~FIFOExecutorImpl() {}
 
 void FIFOExecutorImpl::post(Executor::Func func) {
-  auto task =
-      EpochPtr<Task>::make(Task::Opts{}.set_func(func).set_executor(this));
+  auto* task = new Task{Task::Opts{}.set_func(func).set_executor(this)};
 
   task->set_state(Task::State::kQueuedExecutor);
+  task = fast_queue_.push_back(task);
 
-  auto v = fast_queue_.push_back(std::move(task));
-  if (v.has_value()) {
+  if (task) {
     std::lock_guard l{mu_};
-    queue_.push(std::move(v.value()));
+    queue_.push(task);
   }
 
   refill_queues();
 }
 
-std::optional<EpochPtr<Task>> FIFOExecutorImpl::maybe_pop() {
-  auto t = fast_queue_.pop_front();
-  if (t.has_value()) {
-    return std::move(t.value());
+std::unique_ptr<Task> FIFOExecutorImpl::pop() {
+  auto* t = fast_queue_.pop_front();
+  if (t) {
+    return std::unique_ptr<Task>{t};
   }
 
   std::lock_guard l{mu_};
   if (queue_.empty()) {
-    return {};
+    return nullptr;
   }
 
-  auto p = std::move(queue_.front());
+  auto* p = std::move(queue_.front());
   queue_.pop();
 
   // Refill the fast queue halfway.
@@ -42,15 +41,15 @@ std::optional<EpochPtr<Task>> FIFOExecutorImpl::maybe_pop() {
     if (queue_.empty()) {
       break;
     }
-    auto optional_task = fast_queue_.push_back(std::move(queue_.front()));
-    if (optional_task.has_value()) {
-      queue_.front() = std::move(optional_task.value());
+    auto* t = fast_queue_.push_back(std::move(queue_.front()));
+    if (t) {
+      queue_.front() = t;
       break;
     }
     queue_.pop();
   }
 
-  return p;
+  return std::unique_ptr<Task>{p};
 }
 
 }  // namespace theta

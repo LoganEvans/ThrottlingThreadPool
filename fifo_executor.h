@@ -1,9 +1,9 @@
 #pragma once
 
+#include <memory>
 #include <mutex>
 #include <queue>
 
-#include "epoch.h"
 #include "executor.h"
 #include "task.h"
 
@@ -21,13 +21,13 @@ class FIFOExecutorImpl : public ExecutorImpl {
       : ExecutorImpl(opts), fast_queue_(QueueOpts{}) {}
 
  protected:
-  std::optional<EpochPtr<Task>> maybe_pop() override;
+  std::unique_ptr<Task> pop() override;
 
  private:
   Queue<Task> fast_queue_;
 
   std::mutex mu_;
-  std::queue<EpochPtr<Task>> queue_;
+  std::queue<Task*> queue_;
 };
 
 }  // namespace theta

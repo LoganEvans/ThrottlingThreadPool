@@ -7,10 +7,11 @@
 namespace theta {
 
 /*static*/
-void Task::run(Executor* executor, std::shared_ptr<Task> task) {
-  executor->throttle_list_.append(task);
-  opts().func()();
-  executor->throttle_list_.remove(task.get());
+void Task::run(ExecutorImpl* executor, std::unique_ptr<Task> task) {
+  std::shared_ptr<Task> t{std::move(task)};
+  executor->throttle_list_.append(t);
+  t->opts().func()();
+  executor->throttle_list_.remove(t.get());
 }
 
 Task::State Task::state() const {
@@ -125,55 +126,36 @@ bool TaskQueue::is_shutting_down() const {
   return shutdown_.load(std::memory_order_acquire);
 }
 
-void TaskQueue::push(EpochPtr<Task> task) {
+void TaskQueue::push(std::unique_ptr<Task> task) {
   DCHECK(task);
 
-  auto v = queue_.push_back(std::move(task));
-  CHECK(!v.has_value()) << "queue_.size(): " << queue_.size();
+  auto v = queue_.push_back(task.release());
+  DCHECK(!v);
   sem_.release();
 }
 
-void TaskQueue::push_front(EpochPtr<Task> task) {
-  DCHECK(task);
-
-  auto v = queue_.push_front(std::move(task));
-  CHECK(!v.has_value());
-  sem_.release();
-}
-
-std::optional<EpochPtr<Task>> TaskQueue::maybe_pop() {
+std::unique_ptr<Task> TaskQueue::maybe_pop() {
   if (!sem_.try_acquire()) {
-    return {};
+    return nullptr;
   }
 
-  auto v = queue_.pop_front();
-  return v;
+  return std::unique_ptr<Task>{queue_.pop_front()};
 }
 
-EpochPtr<Task> TaskQueue::wait_pop() {
+std::unique_ptr<Task> TaskQueue::wait_pop() {
   while (true) {
     sem_.acquire();
     if (shutdown_.load(std::memory_order_acquire)) {
       return nullptr;
     }
 
-    auto v = queue_.pop_front();
+    auto* v = queue_.pop_front();
     if (v) {
-      return std::move(v.value());
+      return std::unique_ptr<Task>{v};
     }
 
     sem_.release(1);
   }
-}
-
-std::optional<EpochPtr<Task>> TaskQueue::maybe_pop_back() {
-  if (!sem_.try_acquire()) {
-    return {};
-  }
-
-  auto v = queue_.pop_back();
-  CHECK(v.has_value());
-  return v;
 }
 
 void TaskQueue::unblock_workers(size_t n) { sem_.release(n); }
@@ -244,8 +226,8 @@ void ThrottleList::remove(Task* task) {
       continue;
     }
 
-    if (std::atomic_load_explicit(&throttle_head_,
-                                  std::memory_order::acquire) == task) {
+    if (std::atomic_load_explicit(&throttle_head_, std::memory_order::acquire)
+            .get() == task) {
       std::atomic_store_explicit(&throttle_head_, next,
                                  std::memory_order::release);
     }
@@ -256,7 +238,7 @@ void ThrottleList::remove(Task* task) {
     prev_lock.unlock();
     next_lock.unlock();
 
-    task->set_state(State::kFinished, task_lock);
+    task->set_state(Task::State::kFinished, task_lock);
   }
 }
 

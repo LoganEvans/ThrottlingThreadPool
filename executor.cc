@@ -115,11 +115,10 @@ void ExecutorImpl::refill_queues() {
 
   // Queue more tasks to run
   for (; running_num < running_limit; running_num++) {
-    auto optional_task = maybe_pop();
-    if (!optional_task) {
+    auto task = pop();
+    if (!task) {
       return;
     }
-    auto task = std::move(optional_task.value());
 
     task->set_state(Task::State::kQueuedThreadpool);
     opts().run_queue()->push(std::move(task));

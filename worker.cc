@@ -5,7 +5,6 @@
 #include <sched.h>
 #include <unistd.h>
 
-#include "epoch.h"
 #include "executor.h"
 
 namespace theta {
@@ -60,38 +59,18 @@ pthread_t Worker::get_pthread() {
 }
 
 void Worker::run_loop() {
-  auto task = run_queue_->wait_pop();
-  if (!task) {
-    CHECK(run_queue_->is_shutting_down());
-    return;
-  }
-  task->set_state(Task::State::kPrepping);
-
   while (true) {
+    auto task = run_queue_->wait_pop();
+    if (!task) {
+      CHECK(run_queue_->is_shutting_down());
+      return;
+    }
+    task->set_state(Task::State::kPrepping);
+
     auto* executor = task->opts().executor();
     task->set_worker(this);
     Task::run(executor, std::move(task));
     executor->refill_queues();
-
-    // Avoid a context switch if possible by taking the next available task.
-    std::optional<EpochPtr<Task>> optional_task = run_queue_->maybe_pop();
-    if (!optional_task &&
-        !task->opts().executor()->stats()->running_num_is_at_limit()) {
-      optional_task = task->opts().executor()->maybe_pop();
-    }
-
-    if (optional_task) {
-      task = std::move(optional_task.value());
-    } else {
-      task = run_queue_->wait_pop();
-    }
-
-    if (!task) {
-      CHECK(run_queue_->is_shutting_down());
-      break;
-    }
-
-    task->set_state(Task::State::kPrepping);
   }
 }
 

@@ -17,7 +17,6 @@ static_assert(false);
 #include <semaphore>
 #include <shared_mutex>
 
-#include "epoch.h"
 #include "queue.h"
 #include "semaphore.h"
 
@@ -121,7 +120,7 @@ class Task {
     kCreated = -1,
     kQueuedExecutor = 1,
     kQueuedThreadpool = 2,
-    kPrepping = 3,
+    kPrepping = 3, // TODO(lpe): Remove.
     kRunning = 4,
     kThrottled = 5,
     kFinished = 6,
@@ -129,7 +128,7 @@ class Task {
 
   static bool is_running_state(Task::State state);
 
-  static void run(EpochPtr<Task> task);
+  static void run(ExecutorImpl* executor, std::unique_ptr<Task> task);
 
   Task(Opts opts) : opts_(opts) {}
 
@@ -169,13 +168,10 @@ class TaskQueue {
   void shutdown();
   bool is_shutting_down() const;
 
-  void push(EpochPtr<Task> task);
-  void push_front(EpochPtr<Task> task);
+  void push(std::unique_ptr<Task> task);
 
-  std::optional<EpochPtr<Task>> maybe_pop();
-  EpochPtr<Task> wait_pop();
-
-  std::optional<EpochPtr<Task>> maybe_pop_back();
+  std::unique_ptr<Task> maybe_pop();
+  std::unique_ptr<Task> wait_pop();
 
   void unblock_workers(size_t n);
 
