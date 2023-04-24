@@ -68,10 +68,10 @@ void Worker::run_loop() {
   task->set_state(Task::State::kPrepping);
 
   while (true) {
+    auto* executor = task->opts().executor();
     task->set_worker(this);
-    task->run(task);
-
-    task->opts().executor()->refill_queues();
+    Task::run(executor, std::move(task));
+    executor->refill_queues();
 
     // Avoid a context switch if possible by taking the next available task.
     std::optional<EpochPtr<Task>> optional_task = run_queue_->maybe_pop();

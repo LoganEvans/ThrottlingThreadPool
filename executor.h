@@ -167,8 +167,7 @@ class ExecutorImpl {
 
  private:
   const Opts opts_;
-  Queue<Task> running_{QueueOpts{}};
-  Queue<Task> throttled_{QueueOpts{}};
+  ThrottleList throttle_list_;
 
   ExecutorStats stats_;
 

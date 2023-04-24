@@ -4,9 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
-#include <optional>
-
-#include "epoch.h"
+#include <vector>
 
 namespace theta {
 
@@ -36,16 +34,14 @@ class Queue {
   ~Queue() {
     while (true) {
       auto v = pop_front();
-      if (!v.has_value()) {
+      if (!v) {
         break;
       }
     }
   }
 
-  std::optional<EpochPtr<T>> push_back(EpochPtr<T> val) {
-    EpochPtr<T>* t = EpochPtr<T>::to_address(std::move(val));
-
-    while (t) {
+  T* push_back(T* val) {
+    while (val) {
       uint64_t expected = ht_.line.load(std::memory_order_relaxed);
       uint32_t head, tail;
       do {
@@ -60,7 +56,7 @@ class Queue {
         if (tail == head) {
           // Attempt to push on a full queue. Need to wait until something is
           // popped.
-          return std::move(*t);
+          return val;
         }
       } while (!ht_.line.compare_exchange_weak(
           expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
@@ -70,16 +66,14 @@ class Queue {
       // push to the same index. If this happens, push the old value back into
       // the queue.
       uint32_t index = HeadTail::to_tail(expected);
-      t = buf_[index].exchange(t, std::memory_order::acq_rel);
+      val = buf_[index].exchange(val, std::memory_order::acq_rel);
     }
 
     return {};
   }
 
-  std::optional<EpochPtr<T>> push_front(EpochPtr<T> val) {
-    EpochPtr<T>* t = EpochPtr<T>::to_address(std::move(val));
-
-    while (t) {
+  T* push_front(T* val) {
+    while (val) {
       uint64_t expected = ht_.line.load(std::memory_order_relaxed);
       uint32_t head, tail;
       do {
@@ -94,7 +88,7 @@ class Queue {
         if (head == tail) {
           // Attempt to push on a full queue. Need to wait until something is
           // popped.
-          return std::move(*t);
+          return val;
         }
       } while (!ht_.line.compare_exchange_weak(
           expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
@@ -104,13 +98,13 @@ class Queue {
       // push to the same index. If this happens, push the old value back into
       // the queue.
       int32_t index = HeadTail::to_head(expected);
-      t = buf_[index].exchange(t, std::memory_order::acq_rel);
+      val = buf_[index].exchange(val, std::memory_order::acq_rel);
     }
 
     return {};
   }
 
-  std::optional<EpochPtr<T>> pop_front() {
+  T* pop_front() {
     uint64_t expected = ht_.line.load(std::memory_order_relaxed);
     uint32_t head, tail;
     do {
@@ -132,19 +126,17 @@ class Queue {
         std::memory_order::relaxed));
 
     uint32_t index = HeadTail::to_head(expected);
-    EpochPtr<T>* t{nullptr};
+    T* t{nullptr};
     // It's possible that a push operation has obtained this index but hasn't
     // yet written its value which will cause us to spin.
     do {
       t = buf_[index].exchange(nullptr, std::memory_order::acq_rel);
     } while (!t);
 
-    auto ret = std::move(*t);
-    t->reset();
-    return ret;
+    return t;
   }
 
-  std::optional<EpochPtr<T>> pop_back() {
+  T* pop_back() {
     uint64_t expected = ht_.line.load(std::memory_order_relaxed);
     uint32_t head, tail;
     do {
@@ -166,16 +158,14 @@ class Queue {
         std::memory_order::relaxed));
 
     uint32_t index = HeadTail::to_tail(expected);
-    EpochPtr<T>* t{nullptr};
+    T* t{nullptr};
     // It's possible that a push operation has obtained this index but hasn't
     // yet written its value which will cause us to spin.
     do {
       t = buf_[index].exchange(nullptr, std::memory_order::acq_rel);
     } while (!t);
 
-    auto ret = std::move(*t);
-    t->reset();
-    return ret;
+    return t;
   }
 
   size_t size() const {
@@ -211,7 +201,7 @@ class Queue {
     HeadTail(uint32_t head, uint32_t tail) : line(to_line(head, tail)) {}
   } ht_;
 
-  std::vector<std::atomic<EpochPtr<T>*>> buf_;
+  std::vector<std::atomic<T*>> buf_;
 };
 
 }  // namespace theta

@@ -129,6 +129,8 @@ class Task {
 
   static bool is_running_state(Task::State state);
 
+  static void run(EpochPtr<Task> task);
+
   Task(Opts opts) : opts_(opts) {}
 
   const Opts& opts() const { return opts_; }
@@ -155,7 +157,6 @@ class Task {
 
   State state(const std::lock_guard<std::mutex>&) const;
   State set_state(State state, const std::lock_guard<std::mutex>&);
-  void run(EpochPtr<Task> task);
 };
 
 class TaskQueue {
@@ -192,10 +193,10 @@ class ThrottleList {
   ThrottleList();
 
   void append(std::shared_ptr<Task> task);
-  void remove(std::shared_ptr<Task> task);
+  void remove(Task* task);
 
-  void throttle_one();
-  void unthrottle_one();
+  bool throttle_one();
+  bool unthrottle_one();
 
  private:
   const std::shared_ptr<Task> head_;

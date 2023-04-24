@@ -95,59 +95,22 @@ void ExecutorImpl::refill_queues() {
   int running_limit = stats()->running_limit();
   int running_num = stats()->running_num();
 
-  // Remove finished tasks from the front of the running_ and throttled_ queues.
-  while (true) {
-    auto optional_task = running_.pop_front();
-    if (!optional_task) {
-      break;
-    }
-    auto task = std::move(optional_task.value());
-
-    if (task->state() != Task::State::kFinished) {
-      running_.push_front(std::move(task));
-      break;
-    }
-  }
-
-  while (true) {
-    auto optional_task = throttled_.pop_front();
-    if (!optional_task) {
-      break;
-    }
-    auto task = std::move(optional_task.value());
-
-    if (task->state() != Task::State::kFinished) {
-      throttled_.push_front(std::move(task));
-      break;
-    }
-  }
-
   // Throttle a running task
   while (running_num > running_limit) {
-    auto optional_task = running_.pop_back();
-    if (!optional_task) {
+    if (!throttle_list_.throttle_one()) {
       break;
     }
-    auto task = std::move(optional_task.value());
 
-    if (task->set_state(Task::State::kThrottled) == Task::State::kThrottled) {
-      throttled_.push_back(std::move(task));
-      running_num--;
-    }
+    running_num--;
   }
 
   // Unthrottle a running task
   while (running_num < running_limit) {
-    auto optional_task = throttled_.pop_front();
-    if (!optional_task) {
+    if (!throttle_list_.unthrottle_one()) {
       break;
     }
-    auto task = std::move(optional_task.value());
 
-    if (task->set_state(Task::State::kRunning) == Task::State::kRunning) {
-      running_.push_back(std::move(task));
-      running_num++;
-    }
+    running_num++;
   }
 
   // Queue more tasks to run
