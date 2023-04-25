@@ -6,6 +6,17 @@
 
 namespace theta {
 
+// The acquire method can sleep forever, so use try_acquire_for in a loop
+// instead.
+//
+// See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=104928
+template <typename SemaphoreType>
+void semaphoreAcquireKludge(SemaphoreType& sem) {
+  while (!sem.try_acquire_until(std::chrono::system_clock::now() +
+                                std::chrono::milliseconds(100))) {
+  }
+}
+
 class Semaphore {
  public:
   Semaphore(std::ptrdiff_t desired = 0) : d_(desired) {}
@@ -34,7 +45,7 @@ class Semaphore {
   void acquire() {
     while (!try_acquire()) {
       d_.waiters.fetch_add(1, std::memory_order::acq_rel);
-      sem_.acquire();
+      semaphoreAcquireKludge(sem_);
     }
   }
 
@@ -72,10 +83,11 @@ class Semaphore {
   static_assert(sizeof(Data) == sizeof(Data::line), "");
 
   std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
-
-  void wait() { sem_.acquire(); }
-
-  void wake(size_t n) { sem_.release(n); }
 };
+
+template <>
+void semaphoreAcquireKludge(Semaphore& sem) {
+  sem.acquire();
+}
 
 }  // namespace theta

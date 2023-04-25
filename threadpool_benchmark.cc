@@ -8,61 +8,45 @@
 
 namespace theta {
 
-//static void BM_TaskQueue_counting_semaphore(benchmark::State &state) {
-//  using QType = TaskQueue<
-//      /*SemaphoreType=*/std::counting_semaphore<100>>;
-//  static std::atomic<QType *> tq{nullptr};
-//
-//  if (state.thread_index() == 0) {
-//    tq.store(new QType{}, std::memory_order::release);
-//  }
-//
-//  QType *task_queue{nullptr};
-//  do {
-//    task_queue = tq.load(std::memory_order::acquire);
-//  } while (!task_queue);
-//
-//  fprintf(stderr, "here\n");
-//
-//  for (auto _ : state) {
-//    task_queue->push(std::make_unique<Task>(Task::Opts{}));
-//    task_queue->wait_pop();
-//  }
-//
-//  fprintf(stderr, "there\n");
-//
-//  if (state.thread_index() == 0) {
-//    task_queue->shutdown();
-//    delete tq.exchange(nullptr);
-//  }
-//}
-//BENCHMARK(BM_TaskQueue_counting_semaphore)->Threads(10);
-//
-//static void BM_TaskQueue_custom_semaphore(benchmark::State &state) {
-//  using QType = TaskQueue<
-//      /*SemaphoreType=*/Semaphore>;
-//  static std::atomic<QType *> tq{nullptr};
-//
-//  if (state.thread_index() == 0) {
-//    tq.store(new QType{}, std::memory_order::release);
-//  }
-//
-//  QType *task_queue{nullptr};
-//  do {
-//    task_queue = tq.load(std::memory_order::acquire);
-//  } while (!task_queue);
-//
-//  for (auto _ : state) {
-//    task_queue->push(std::make_unique<Task>(Task::Opts{}));
-//    task_queue->wait_pop();
-//  }
-//
-//  if (state.thread_index() == 0) {
-//    task_queue->shutdown();
-//    delete tq.exchange(nullptr);
-//  }
-//}
-//BENCHMARK(BM_TaskQueue_custom_semaphore)->Threads(10);
+template <typename QType>
+static void BM_queue(benchmark::State &state) {
+  static std::atomic<QType *> tq{nullptr};
+  static std::atomic<int> workers{0};
+
+  if (state.thread_index() == 0) {
+    tq.store(new QType{}, std::memory_order::release);
+  }
+
+  workers.fetch_add(1, std::memory_order::acq_rel);
+  QType *task_queue{nullptr};
+  do {
+    task_queue = tq.load(std::memory_order::acquire);
+  } while (!task_queue);
+
+  for (auto _ : state) {
+    task_queue->push(std::make_unique<Task>(Task::Opts{}));
+    task_queue->wait_pop();
+  }
+
+  workers.fetch_sub(1, std::memory_order::acq_rel);
+
+  if (state.thread_index() == 0) {
+    while (workers.load(std::memory_order::acq_rel)) {
+    }
+    task_queue->shutdown();
+    delete tq.exchange(nullptr);
+  }
+}
+
+using CustomSemaphore = Semaphore;
+BENCHMARK_TEMPLATE(BM_queue, TaskQueue<CustomSemaphore>)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(10);
+BENCHMARK_TEMPLATE(BM_queue, TaskQueue<std::counting_semaphore<100>>)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(10);
 
 template <typename SemaphoreType>
 static void BM_semaphore(benchmark::State &state) {
@@ -70,16 +54,14 @@ static void BM_semaphore(benchmark::State &state) {
 
   for (auto _ : state) {
     sem.release();
-    sem.acquire();
+    semaphoreAcquireKludge(sem);
   }
 }
 
+BENCHMARK_TEMPLATE(BM_semaphore, CustomSemaphore)->Threads(1)->Threads(2);
 BENCHMARK_TEMPLATE(BM_semaphore, std::counting_semaphore<100>)
     ->Threads(1)
     ->Threads(2);
-
-using CustomSemaphore = Semaphore;
-BENCHMARK_TEMPLATE(BM_semaphore, CustomSemaphore)->Threads(1)->Threads(2);
 
 }  // namespace theta
 
