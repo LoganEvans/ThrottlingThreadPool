@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glog/logging.h>
+
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -56,6 +58,7 @@ class Queue {
         if (tail == head) {
           // Attempt to push on a full queue. Need to wait until something is
           // popped.
+          fprintf(stderr, "push_back full\n");
           return val;
         }
       } while (!ht_.line.compare_exchange_weak(
@@ -69,7 +72,7 @@ class Queue {
       val = buf_[index].exchange(val, std::memory_order::acq_rel);
     }
 
-    return {};
+    return nullptr;
   }
 
   T* push_front(T* val) {

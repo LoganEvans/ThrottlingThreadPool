@@ -1,7 +1,5 @@
 #include "task.h"
 
-#include <glog/logging.h>
-
 #include "executor.h"
 
 namespace theta {
@@ -110,47 +108,6 @@ Task::State Task::set_state(State state, const std::unique_lock<std::mutex>&) {
   return state;
 }
 
-void TaskQueue::shutdown() {
-  shutdown_.store(true);
-  sem_.release(std::numeric_limits<int32_t>::max() / 2);
-}
-
-bool TaskQueue::is_shutting_down() const {
-  return shutdown_.load(std::memory_order_acquire);
-}
-
-void TaskQueue::push(std::unique_ptr<Task> task) {
-  DCHECK(task);
-
-  auto v = queue_.push_back(task.release());
-  DCHECK(!v);
-  sem_.release();
-}
-
-std::unique_ptr<Task> TaskQueue::maybe_pop() {
-  if (!sem_.try_acquire()) {
-    return nullptr;
-  }
-
-  return std::unique_ptr<Task>{queue_.pop_front()};
-}
-
-std::unique_ptr<Task> TaskQueue::wait_pop() {
-  while (true) {
-    sem_.acquire();
-    if (shutdown_.load(std::memory_order_acquire)) {
-      return nullptr;
-    }
-
-    auto* v = queue_.pop_front();
-    if (v) {
-      return std::unique_ptr<Task>{v};
-    }
-
-    sem_.release(1);
-  }
-}
-
 ThrottleList::ThrottleList()
     : head_(new Task{Task::Opts{}}),
       tail_(new Task{Task::Opts{}}),
@@ -161,62 +118,52 @@ ThrottleList::ThrottleList()
 }
 
 void ThrottleList::append(std::shared_ptr<Task> task) {
-  while (true) {
+  std::unique_lock task_lock{task->mutex_};
+
+  {
+    std::unique_lock tail_lock{tail_->mutex_, std::defer_lock};
+
     std::shared_ptr<Task> prev{nullptr};
 
-    {
-      std::lock_guard l{tail_->mutex_};
-      prev = tail_->prev_;
-    }
-
-    std::unique_lock prev_lock{prev->mutex_, std::defer_lock};
-    std::unique_lock tail_lock{tail_->mutex_, std::defer_lock};
-    std::unique_lock task_lock{task->mutex_, std::defer_lock};
-    std::lock(prev_lock, tail_lock, task_lock);
-
-    if (tail_->prev_ != prev) {
-      continue;
-    }
+    tail_lock.lock();
+    prev = tail_->prev_;
+    std::unique_lock prev_lock{prev->mutex_};
 
     task->prev_ = std::move(prev);
     task->next_ = tail_;
 
     task->prev_->next_ = task;
     tail_->prev_ = task;
+  }
 
-    prev_lock.unlock();
-    tail_lock.unlock();
-
-    if (std::atomic_load_explicit(&throttle_head_,
-                                  std::memory_order::acquire) == tail_) {
-      task->set_state(Task::State::kRunning, task_lock);
-    } else {
-      task->set_state(Task::State::kThrottled, task_lock);
-    }
-
-    break;
+  if (std::atomic_load_explicit(&throttle_head_, std::memory_order::acquire) ==
+      tail_) {
+    task->set_state(Task::State::kRunning, task_lock);
+  } else {
+    task->set_state(Task::State::kThrottled, task_lock);
   }
 }
 
 void ThrottleList::remove(Task* task) {
   while (true) {
+    std::unique_lock task_lock{task->mutex_, std::defer_lock};
+
     std::shared_ptr<Task> prev{nullptr};
     std::shared_ptr<Task> next{nullptr};
 
-    {
-      std::lock_guard l{task->mutex_};
-      prev = task->prev_;
-      next = task->next_;
-    }
+    task_lock.lock();
+    prev = task->prev_;
+    next = task->next_;
 
     std::unique_lock prev_lock{prev->mutex_, std::defer_lock};
     std::unique_lock next_lock{next->mutex_, std::defer_lock};
-    std::unique_lock task_lock{task->mutex_, std::defer_lock};
-    std::lock(prev_lock, next_lock, task_lock);
 
-    if (task->prev_ != prev || task->next_ != next) {
+    if (!next_lock.try_lock()) {
+      task_lock.unlock();
       continue;
     }
+
+    prev_lock.lock();
 
     if (std::atomic_load_explicit(&throttle_head_, std::memory_order::acquire)
             .get() == task) {

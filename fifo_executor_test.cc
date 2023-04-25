@@ -48,7 +48,7 @@ TEST(FIFOExecutor, DISABLED_post) {
 }
 
 TEST(FIFOExecutor, saturate_single_thread) {
-  static constexpr int kJobs = 1000;
+  static constexpr int kJobs = 1000000;
 
   std::condition_variable cv;
   std::mutex mu;

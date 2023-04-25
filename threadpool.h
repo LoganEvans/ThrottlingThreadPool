@@ -79,7 +79,7 @@ class ThrottlingThreadpool {
   std::shared_mutex shared_mutex_;
   ConfigureOpts opts_;
 
-  TaskQueue run_queue_;
+  TaskQueue<> run_queue_;
   std::vector<std::unique_ptr<Worker>> workers_;
 
   std::vector<std::unique_ptr<ExecutorImpl>> executors_;

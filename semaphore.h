@@ -1,12 +1,15 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <semaphore>
 
 namespace theta {
 
 class Semaphore {
  public:
+  Semaphore(std::ptrdiff_t desired = 0) : d_(desired) {}
+
   void release(size_t n = 1) {
     Data d = Data{1 + d_.line.fetch_add(
                           Data{/*waiters=*/0, /*count=*/static_cast<int32_t>(n)}

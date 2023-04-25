@@ -112,8 +112,8 @@ class ExecutorOpts {
   }
 
  protected:
-  TaskQueue* run_queue() const { return run_queue_; }
-  ExecutorOpts& set_run_queue(TaskQueue* val) {
+  TaskQueue<>* run_queue() const { return run_queue_; }
+  ExecutorOpts& set_run_queue(TaskQueue<>* val) {
     run_queue_ = val;
     return *this;
   }
@@ -123,7 +123,7 @@ class ExecutorOpts {
   size_t thread_weight_{1};
   size_t worker_limit_{0};
   bool require_low_latency_{false};
-  TaskQueue* run_queue_{nullptr};
+  TaskQueue<>* run_queue_{nullptr};
 };
 
 class ExecutorImpl {

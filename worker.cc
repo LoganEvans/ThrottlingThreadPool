@@ -9,7 +9,7 @@
 
 namespace theta {
 
-Worker::Worker(TaskQueue* run_queue)
+Worker::Worker(TaskQueue<>* run_queue)
     : run_queue_(run_queue), thread_(&Worker::run_loop, this) {}
 
 Worker::~Worker() { thread_.join(); }

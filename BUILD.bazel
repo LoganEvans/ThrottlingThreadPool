@@ -178,6 +178,7 @@ cc_binary(
   name = "threadpool_benchmark",
   srcs = ["threadpool_benchmark.cc"],
   deps = [
+    ":task",
     ":threadpool",
     "@benchmark//:benchmark",
   ],

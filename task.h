@@ -5,6 +5,7 @@
 static_assert(false);
 #endif
 
+#include <glog/logging.h>
 #include <sys/resource.h>
 #include <sys/time.h>
 
@@ -157,25 +158,72 @@ class Task {
   State set_state(State state, const std::unique_lock<std::mutex>&);
 };
 
+template <typename T>
+concept SemaphoreType = requires(T t) {
+  t.release();
+  t.acquire;
+  { t.try_acquire() } -> std::convertible_to<bool>;
+};
+
+template <typename SemaphoreType = Semaphore>
 class TaskQueue {
  public:
   using Func = Task::Func;
 
   TaskQueue(size_t max_tasks = 512)
-      : queue_(QueueOpts{}.set_max_size(max_tasks)) {}
+      : sem_(0), queue_(QueueOpts{}.set_max_size(max_tasks)) {}
 
-  void shutdown();
-  bool is_shutting_down() const;
+  void shutdown() {
+    shutdown_.store(true);
+    sem_.release(std::numeric_limits<int32_t>::max() / 2);
+  }
 
-  void push(std::unique_ptr<Task> task);
+  bool is_shutting_down() const {
+    return shutdown_.load(std::memory_order_acquire);
+  }
 
-  std::unique_ptr<Task> maybe_pop();
-  std::unique_ptr<Task> wait_pop();
+  void push(std::unique_ptr<Task> task) {
+    DCHECK(task);
+
+    auto v = queue_.push_back(task.release());
+    DCHECK(!v);
+    sem_.release();
+  }
+
+  std::unique_ptr<Task> maybe_pop() {
+    if (!sem_.try_acquire()) {
+      return nullptr;
+    }
+
+    auto* v = queue_.pop_front();
+    if (!v) {
+      sem_.release(1);
+      return nullptr;
+    }
+
+    return std::unique_ptr<Task>{v};
+  }
+
+  std::unique_ptr<Task> wait_pop() {
+    while (true) {
+      sem_.acquire();
+      if (shutdown_.load(std::memory_order_acquire)) {
+        return nullptr;
+      }
+
+      auto* v = queue_.pop_front();
+      if (v) {
+        return std::unique_ptr<Task>{v};
+      }
+
+      sem_.release(1);
+    }
+  }
 
   size_t size() const { return queue_.size(); }
 
  private:
-  Semaphore sem_;
+  SemaphoreType sem_;
 
   Queue<Task> queue_;
   std::atomic<bool> shutdown_{false};
