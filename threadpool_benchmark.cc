@@ -64,9 +64,8 @@ namespace theta {
 //}
 //BENCHMARK(BM_TaskQueue_custom_semaphore)->Threads(10);
 
-static void BM_counting_semaphore(benchmark::State &state) {
-  using SemaphoreType =
-      std::counting_semaphore<std::numeric_limits<int32_t>::max()>;
+template <typename SemaphoreType>
+static void BM_semaphore(benchmark::State &state) {
   static SemaphoreType sem{0};
 
   for (auto _ : state) {
@@ -74,18 +73,11 @@ static void BM_counting_semaphore(benchmark::State &state) {
     sem.acquire();
   }
 }
-BENCHMARK(BM_counting_semaphore)->Threads(1);
 
-static void BM_custom_semaphore(benchmark::State &state) {
-  using SemaphoreType = Semaphore;
-  static SemaphoreType sem{0};
+BENCHMARK_TEMPLATE(BM_semaphore, std::counting_semaphore<100>)->Threads(1);
 
-  for (auto _ : state) {
-    sem.release();
-    sem.acquire();
-  }
-}
-BENCHMARK(BM_custom_semaphore)->Threads(1);
+using CustomSemaphore = Semaphore;
+BENCHMARK_TEMPLATE(BM_semaphore, CustomSemaphore)->Threads(1)->Threads(10);
 
 }  // namespace theta
 
