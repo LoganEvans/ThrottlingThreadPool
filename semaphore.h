@@ -11,10 +11,11 @@ class Semaphore {
   Semaphore(std::ptrdiff_t desired = 0) : d_(desired) {}
 
   void release(size_t n = 1) {
-    Data d = Data{1 + d_.line.fetch_add(
-                          Data{/*waiters=*/0, /*count=*/static_cast<int32_t>(n)}
-                              .line.load(std::memory_order::relaxed),
-                          std::memory_order::acq_rel)};
+    Data d = Data{d_.line.fetch_add(
+        Data{/*waiters=*/0, /*count=*/static_cast<int32_t>(n)}.line.load(
+            std::memory_order::relaxed),
+        std::memory_order::acq_rel)};
+    d.count.fetch_add(n, std::memory_order::relaxed);
 
     while (d.waiters.load(std::memory_order::relaxed)) {
       int64_t expected = d.line.load(std::memory_order::relaxed);
@@ -68,6 +69,8 @@ class Semaphore {
       return *this;
     }
   } d_;
+  static_assert(sizeof(Data) == sizeof(Data::line), "");
+
   std::counting_semaphore<std::numeric_limits<int32_t>::max()> sem_{0};
 
   void wait() { sem_.acquire(); }
