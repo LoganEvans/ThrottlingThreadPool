@@ -206,7 +206,7 @@ class TaskQueue {
 
   std::unique_ptr<Task> wait_pop() {
     while (true) {
-      sem_.acquire();
+      semaphoreAcquireKludge(sem_);
       if (shutdown_.load(std::memory_order_acquire)) {
         return nullptr;
       }
