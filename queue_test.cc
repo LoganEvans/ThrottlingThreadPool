@@ -31,4 +31,21 @@ TEST(Queue, push_back_pop_front) {
   EXPECT_EQ(expected, 110);
 }
 
+TEST(Queue, flusher) {
+  static constexpr int kSize = 10;
+  Queue<int*> queue{QueueOpts{}};
+
+  for (int i = 0; i < kSize; i++) {
+    EXPECT_EQ(queue.size(), i);
+    queue.push_back(new int{100 + i});
+  }
+
+  int expected = 100;
+  for (auto* v : queue.flusher()) {
+    EXPECT_EQ(*v, expected++);
+    delete v;
+  }
+  EXPECT_EQ(expected, 110);
+}
+
 }  // namespace theta
