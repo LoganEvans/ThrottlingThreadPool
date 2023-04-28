@@ -24,7 +24,7 @@ class FIFOExecutorImpl : public ExecutorImpl {
   std::unique_ptr<Task> pop() override;
 
  private:
-  Queue<Task> fast_queue_;
+  Queue<Task*> fast_queue_;
 
   std::mutex mu_;
   std::queue<Task*> queue_;

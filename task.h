@@ -174,8 +174,9 @@ class TaskQueue {
       : sem_(0), queue_(QueueOpts{}.set_max_size(max_tasks)) {}
 
   void shutdown() {
-    shutdown_.store(true);
-    sem_.release(std::numeric_limits<int32_t>::max() / 2);
+    if (!shutdown_.exchange(true, std::memory_order::acq_rel)) {
+      sem_.release(std::numeric_limits<int32_t>::max() / 2);
+    }
   }
 
   bool is_shutting_down() const {
@@ -216,6 +217,8 @@ class TaskQueue {
         return std::unique_ptr<Task>{v};
       }
 
+      CHECK(false);
+
       sem_.release(1);
     }
   }
@@ -225,7 +228,7 @@ class TaskQueue {
  private:
   SemaphoreType sem_;
 
-  Queue<Task> queue_;
+  Queue<Task*> queue_;
   std::atomic<bool> shutdown_{false};
 };
 

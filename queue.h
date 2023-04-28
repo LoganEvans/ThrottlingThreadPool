@@ -23,6 +23,21 @@ class QueueOpts {
 };
 
 template <typename T>
+auto constexpr is_atomic = false;
+
+template <typename T>
+auto constexpr is_atomic<std::atomic<T>> = std::atomic<T>::is_always_lock_free;
+
+template <typename T>
+auto constexpr can_be_atomic = is_atomic<std::atomic<T>>;
+
+template <typename T>
+concept ZeroableAtomType = requires(T t) {
+  can_be_atomic<T>;
+  static_cast<bool>(T{}) == false;
+};
+
+template <ZeroableAtomType T>
 class Queue {
   static constexpr size_t next_pow_2(int v) {
     int lg_v = 8 * sizeof(v) - __builtin_clz(v);
@@ -42,137 +57,79 @@ class Queue {
     }
   }
 
-  T* push_back(T* val) {
-    while (val) {
-      uint64_t expected = ht_.line.load(std::memory_order_relaxed);
-      uint32_t head, tail;
-      do {
-        head = HeadTail::to_head(expected);
-        tail = HeadTail::to_tail(expected);
-        if (tail == 0) {
-          tail = buf_.size() - 1;
-        } else {
-          tail--;
-        }
-
-        if (tail == head) {
-          // Attempt to push on a full queue. Need to wait until something is
-          // popped.
-          fprintf(stderr, "push_back full\n");
-          return val;
-        }
-      } while (!ht_.line.compare_exchange_weak(
-          expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
-          std::memory_order::release, std::memory_order::relaxed));
-
-      // In some cases, e.g. push -> pop -> push, two threads will attempt to
-      // push to the same index. If this happens, push the old value back into
-      // the queue.
-      uint32_t index = HeadTail::to_tail(expected);
-      val = buf_[index].exchange(val, std::memory_order::acq_rel);
-    }
-
-    return nullptr;
-  }
-
-  T* push_front(T* val) {
-    while (val) {
-      uint64_t expected = ht_.line.load(std::memory_order_relaxed);
-      uint32_t head, tail;
-      do {
-        head = HeadTail::to_head(expected);
-        tail = HeadTail::to_tail(expected);
-        if (head == buf_.size() - 1) {
-          head = 0;
-        } else {
-          head++;
-        }
-
-        if (head == tail) {
-          // Attempt to push on a full queue. Need to wait until something is
-          // popped.
-          return val;
-        }
-      } while (!ht_.line.compare_exchange_weak(
-          expected, HeadTail::to_line(/*head=*/head, /*tail=*/tail),
-          std::memory_order::release, std::memory_order::relaxed));
-
-      // In some cases, e.g. push -> pop -> push, two threads will attempt to
-      // push to the same index. If this happens, push the old value back into
-      // the queue.
-      int32_t index = HeadTail::to_head(expected);
-      val = buf_[index].exchange(val, std::memory_order::acq_rel);
-    }
-
-    return {};
-  }
-
-  T* pop_front() {
-    uint64_t expected = ht_.line.load(std::memory_order_relaxed);
+  T push_back(T val) {
+    DCHECK(val);
+    uint64_t expected = ht_.line.load(std::memory_order::relaxed);
     uint32_t head, tail;
     do {
       head = HeadTail::to_head(expected);
       tail = HeadTail::to_tail(expected);
-
-      if (head == tail) {
-        // Attempt to pop from an empty queue.
-        return {};
-      }
-
-      if (head == 0) {
-        head = buf_.size() - 1;
-      } else {
-        head--;
-      }
-    } while (!ht_.line.compare_exchange_weak(
-        expected, HeadTail::to_line(head, tail), std::memory_order::release,
-        std::memory_order::relaxed));
-
-    uint32_t index = HeadTail::to_head(expected);
-    T* t{nullptr};
-    // It's possible that a push operation has obtained this index but hasn't
-    // yet written its value which will cause us to spin.
-    do {
-      t = buf_[index].exchange(nullptr, std::memory_order::acq_rel);
-    } while (!t);
-
-    return t;
-  }
-
-  T* pop_back() {
-    uint64_t expected = ht_.line.load(std::memory_order_relaxed);
-    uint32_t head, tail;
-    do {
-      head = HeadTail::to_head(expected);
-      tail = HeadTail::to_tail(expected);
-
-      if (head == tail) {
-        // Attempt to pop from an empty queue.
-        return {};
-      }
 
       if (tail == buf_.size() - 1) {
         tail = 0;
       } else {
         tail++;
       }
+
+      if (tail == head) {
+        // Attempt to push on a full queue. Need to wait until something is
+        // popped.
+        return val;
+      }
     } while (!ht_.line.compare_exchange_weak(
         expected, HeadTail::to_line(head, tail), std::memory_order::release,
         std::memory_order::relaxed));
 
     uint32_t index = HeadTail::to_tail(expected);
-    T* t{nullptr};
+
+    // It is possible that a pop operation has claimed this index but hasn't
+    // yet performed its read.
+    while (true) {
+      T expect_zero{};
+      if (buf_[index].compare_exchange_weak(expect_zero, val,
+                                            std::memory_order::release,
+                                            std::memory_order::relaxed)) {
+        break;
+      }
+    }
+
+    return T{};
+  }
+
+  T pop_front() {
+    uint64_t expected = ht_.line.load(std::memory_order::relaxed);
+    uint32_t head, tail;
+    do {
+      head = HeadTail::to_head(expected);
+      tail = HeadTail::to_tail(expected);
+
+      if (head == tail) {
+        // Attempt to pop from an empty queue.
+        return T{};
+      }
+
+      if (head == buf_.size() - 1) {
+        head = 0;
+      } else {
+        head++;
+      }
+    } while (!ht_.line.compare_exchange_weak(
+        expected, HeadTail::to_line(head, tail), std::memory_order::release,
+        std::memory_order::relaxed));
+
+    uint32_t index = HeadTail::to_head(expected);
+    T t{};
     // It's possible that a push operation has obtained this index but hasn't
     // yet written its value which will cause us to spin.
     do {
-      t = buf_[index].exchange(nullptr, std::memory_order::acq_rel);
+      t = buf_[index].exchange(t, std::memory_order::acq_rel);
     } while (!t);
 
     return t;
   }
 
   size_t size() const {
-    uint64_t line = ht_.line.load(std::memory_order_acquire);
+    uint64_t line = ht_.line.load(std::memory_order::acquire);
     uint32_t head = HeadTail::to_head(line);
     uint32_t tail = HeadTail::to_tail(line);
     if (head < tail) {
@@ -204,7 +161,7 @@ class Queue {
     HeadTail(uint32_t head, uint32_t tail) : line(to_line(head, tail)) {}
   } ht_;
 
-  std::vector<std::atomic<T*>> buf_;
+  std::vector<std::atomic<T>> buf_;
 };
 
 }  // namespace theta

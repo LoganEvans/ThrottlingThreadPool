@@ -40,13 +40,13 @@ static void BM_queue(benchmark::State &state) {
 
 using CustomSemaphore = Semaphore;
 BENCHMARK_TEMPLATE(BM_queue, TaskQueue<CustomSemaphore>)
-    ->Threads(1)
-    ->Threads(2)
-    ->Threads(10);
-BENCHMARK_TEMPLATE(BM_queue, TaskQueue<std::counting_semaphore<100>>)
-    ->Threads(1)
-    ->Threads(2)
-    ->Threads(10);
+    //->Threads(1)
+    ->Threads(2);
+    //->Threads(10);
+//BENCHMARK_TEMPLATE(BM_queue, TaskQueue<std::counting_semaphore<100>>)
+//    ->Threads(1)
+//    ->Threads(2)
+//    ->Threads(10);
 
 template <typename SemaphoreType>
 static void BM_semaphore(benchmark::State &state) {
@@ -58,10 +58,10 @@ static void BM_semaphore(benchmark::State &state) {
   }
 }
 
-BENCHMARK_TEMPLATE(BM_semaphore, CustomSemaphore)->Threads(1)->Threads(2);
-BENCHMARK_TEMPLATE(BM_semaphore, std::counting_semaphore<100>)
-    ->Threads(1)
-    ->Threads(2);
+//BENCHMARK_TEMPLATE(BM_semaphore, CustomSemaphore)->Threads(1)->Threads(2);
+//BENCHMARK_TEMPLATE(BM_semaphore, std::counting_semaphore<100>)
+//    ->Threads(1)
+//    ->Threads(2);
 
 }  // namespace theta
 
