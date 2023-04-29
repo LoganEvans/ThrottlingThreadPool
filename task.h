@@ -234,17 +234,20 @@ class ThrottleList {
 
   void append(Task* task, std::unique_lock<std::mutex>& lock);
   void remove(Task* task, std::unique_lock<std::mutex>& lock);
+  void set_running_limit(size_t running_limit,
+                         std::unique_lock<std::mutex>& lock);
 
-  void throttle(size_t n, std::unique_lock<std::mutex>& lock);
-  void unthrottle(size_t n, std::unique_lock<std::mutex>& lock);
+  uint32_t total(
+      std::memory_order mem_order = std::memory_order::relaxed) const {
+    return Count{count_, mem_order}.total();
+  }
 
  private:
   struct Modification {
     enum class Op : uintptr_t {
       kAppend = 1,
       kRemove = 2,
-      kThrottle = 3,
-      kUnthrottle = 4,
+      kSetRunningLimit = 3,
     };
 
     Modification() : data_(0) {}
@@ -253,15 +256,17 @@ class ThrottleList {
         : data_(static_cast<uintptr_t>(op) |
                 reinterpret_cast<uintptr_t>(task)) {}
 
-    Modification(Op op, size_t count)
-        : data_(static_cast<uintptr_t>(op) |
-                reinterpret_cast<uintptr_t>(count << 32)) {}
+    Modification(uint64_t running_limit)
+        : data_(static_cast<uintptr_t>(Op::kSetRunningLimit) |
+                reinterpret_cast<uintptr_t>(running_limit << 32)) {}
 
-    Op op() const { return static_cast<Op>(data_ & 0x7); }
+    Op op() const { return static_cast<Op>(data_ & 0x3); }
 
-    Task* task() const { return reinterpret_cast<Task*>(data_ & ~0x7); }
+    Task* task() const { return reinterpret_cast<Task*>(data_ & ~0x3); }
 
-    size_t count() const { return reinterpret_cast<size_t>(data_ >> 32); }
+    uint32_t running_limit() const {
+      return reinterpret_cast<size_t>(data_ >> 32);
+    }
 
     operator bool() const { return static_cast<bool>(data_); }
 
@@ -275,8 +280,67 @@ class ThrottleList {
   Task* const tail_{&tail_real_};
 
   Task* throttle_head_{tail_};
+  union Count {
+    static constexpr int kFieldBits = 20;
+    static constexpr uint64_t kFieldMask = (1ULL << kFieldBits) - 1;
 
-  std::mutex mu_;
+    static constexpr int kRunningOffset = 0;
+    static constexpr uint64_t kRunningMask = kFieldMask;
+
+    static constexpr int kRunningLimitOffset = kFieldBits + 1;
+    static constexpr uint64_t kRunningLimitMask = kFieldMask
+                                                  << kRunningLimitOffset;
+
+    static constexpr int kTotalOffset = kRunningLimitOffset + kFieldBits + 1;
+    static constexpr uint64_t kTotalMask = kFieldMask << kTotalOffset;
+
+    static constexpr uint64_t kValidMask =
+        kRunningMask | kRunningLimitMask | kTotalMask;
+
+    Count() = default;
+
+    Count(uint64_t running, uint64_t running_limit, uint64_t total)
+        : line_(running | (running_limit << kRunningLimitOffset) |
+                (total << kTotalOffset)) {}
+
+    Count(const Count& other,
+          std::memory_order mem_order = std::memory_order::relaxed)
+        : line_(other.line_.load(mem_order)) {}
+
+    uint64_t line(
+        std::memory_order mem_order = std::memory_order::relaxed) const {
+      return line_.load(mem_order);
+    }
+
+    uint32_t running() const {
+      return line() & kFieldMask;
+    }
+    void set_running(uint64_t val,
+                     std::memory_order mem_order = std::memory_order::relaxed) {
+      line_.store((line() & ~kRunningMask) | (val << kRunningOffset),
+                  mem_order);
+    }
+
+    uint32_t running_limit() const {
+      return (line() >> kFieldBits) & kFieldMask;
+    }
+    void set_running_limit(uint64_t val, std::memory_order mem_order =
+                                             std::memory_order::relaxed) {
+      line_.store((line() & ~kRunningLimitMask) | (val << kRunningLimitOffset),
+                  mem_order);
+    }
+
+    uint32_t total() const {
+      return (line() >> (2 * kFieldBits)) & kFieldMask;
+    }
+    void set_total(uint64_t val,
+                   std::memory_order mem_order = std::memory_order::relaxed) {
+      line_.store((line() & ~kTotalMask) | (val << kTotalOffset), mem_order);
+    }
+
+    std::atomic<uint64_t> line_{0};
+  } count_;
+
   Queue<Modification> modification_queue_;
 
   void flush_modifications(std::unique_lock<std::mutex>& lock);

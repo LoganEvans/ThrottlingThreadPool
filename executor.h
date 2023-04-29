@@ -42,22 +42,29 @@ class ExecutorStats {
 
   bool run_state_is_normal() const;
 
-  int running_num() const;
+  int running_num(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
   void running_delta(int val);
 
-  int waiting_num() const;
+  int waiting_num(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
   void waiting_delta(int val);
 
-  int throttled_num() const;
+  int throttled_num(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
   void throttled_delta(int val);
 
-  int finished_num() const;
+  int finished_num(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
   void finished_delta(int val);
 
-  int running_limit() const;
+  int running_limit(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
   void set_running_limit(int val);
 
-  bool running_num_is_at_limit() const;
+  int total_limit(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
+  void set_total_limit(int val);
 
   double ema_usage_proportion() const;
   void update_ema_usage_proportion(struct rusage* begin_ru,
@@ -75,6 +82,7 @@ class ExecutorStats {
   std::atomic<int> finished_num_{0};
 
   std::atomic<int> running_limit_{0};
+  std::atomic<int> total_limit_{0};
 
   std::atomic<double> ema_usage_proportion_{1.0};
 };

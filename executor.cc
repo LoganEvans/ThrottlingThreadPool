@@ -6,52 +6,56 @@
 
 namespace theta {
 
+// TODO(lpe): Get rid of run_state_is_normal_.
 ExecutorStats::ExecutorStats(bool run_state_is_normal)
     : run_state_is_normal_(run_state_is_normal) {}
 
 bool ExecutorStats::run_state_is_normal() const { return run_state_is_normal_; }
 
-int ExecutorStats::running_num() const {
-  return running_num_.load(std::memory_order_relaxed);
+int ExecutorStats::running_num(std::memory_order mem_order) const {
+  return running_num_.load(mem_order);
 }
 void ExecutorStats::running_delta(int val) {
-  running_num_.fetch_add(val, std::memory_order_acq_rel);
+  running_num_.fetch_add(val, std::memory_order::acq_rel);
 }
 
-int ExecutorStats::waiting_num() const {
-  return waiting_num_.load(std::memory_order_relaxed);
+int ExecutorStats::waiting_num(std::memory_order mem_order) const {
+  return waiting_num_.load(mem_order);
 }
 void ExecutorStats::waiting_delta(int val) {
-  waiting_num_.fetch_add(val, std::memory_order_acq_rel);
+  waiting_num_.fetch_add(val, std::memory_order::acq_rel);
 }
 
-int ExecutorStats::throttled_num() const {
-  return throttled_num_.load(std::memory_order_relaxed);
+int ExecutorStats::throttled_num(std::memory_order mem_order) const {
+  return throttled_num_.load(mem_order);
 }
 void ExecutorStats::throttled_delta(int val) {
-  throttled_num_.fetch_add(val, std::memory_order_acq_rel);
+  throttled_num_.fetch_add(val, std::memory_order::acq_rel);
 }
 
-int ExecutorStats::finished_num() const {
-  return finished_num_.load(std::memory_order_relaxed);
+int ExecutorStats::finished_num(std::memory_order mem_order) const {
+  return finished_num_.load(mem_order);
 }
 void ExecutorStats::finished_delta(int val) {
-  finished_num_.fetch_add(val, std::memory_order_acq_rel);
+  finished_num_.fetch_add(val, std::memory_order::acq_rel);
 }
 
-int ExecutorStats::running_limit() const {
-  return running_limit_.load(std::memory_order_relaxed);
+int ExecutorStats::running_limit(std::memory_order mem_order) const {
+  return running_limit_.load(mem_order);
 }
 void ExecutorStats::set_running_limit(int val) {
-  running_limit_.store(val, std::memory_order_relaxed);
+  running_limit_.store(val, std::memory_order::relaxed);
 }
 
-bool ExecutorStats::running_num_is_at_limit() const {
-  return running_num() >= running_limit();
+int ExecutorStats::total_limit(std::memory_order mem_order) const {
+  return total_limit_.load(mem_order);
+}
+void ExecutorStats::set_total_limit(int val) {
+  total_limit_.store(val, std::memory_order::relaxed);
 }
 
 double ExecutorStats::ema_usage_proportion() const {
-  return ema_usage_proportion_.load(std::memory_order_relaxed);
+  return ema_usage_proportion_.load(std::memory_order::relaxed);
 }
 void ExecutorStats::update_ema_usage_proportion(struct rusage* begin_ru,
                                                 struct timeval* begin_tv,
@@ -75,7 +79,8 @@ void ExecutorStats::update_ema_usage_proportion(struct rusage* begin_ru,
     double s_old = ema_usage_proportion();
     desired = s_old + alpha * (proportion - s_old);
   } while (!ema_usage_proportion_.compare_exchange_weak(
-      expected, desired, std::memory_order_release, std::memory_order_relaxed));
+      expected, desired, std::memory_order::release,
+      std::memory_order::relaxed));
 }
 
 /*static*/
@@ -90,22 +95,16 @@ void ExecutorImpl::get_tv(timeval* tv) {
 
 void ExecutorImpl::refill_queues() {
   std::unique_lock lock{mu_, std::defer_lock};
-  if (!lock.try_lock()) {
-    return;
-  }
-
-  int running_limit = stats()->running_limit();
-  int running_num = stats()->running_num();
-
-  // Throttle a running task
-  if (running_num > running_limit) {
-    throttle_list_.throttle(running_num - running_limit, lock);
-  } else if (running_num < running_limit) {
-    throttle_list_.unthrottle(running_limit - running_num, lock);
-  }
+  throttle_list_.set_running_limit(
+      stats()->running_limit(std::memory_order::acquire), lock);
 
   // Queue more tasks to run
-  for (; running_num < running_limit; running_num++) {
+  // TODO(lpe): This has a potential for over-queueing tasks because there's a
+  // race condition between checking how many tasks are queued and queuing
+  // another one, which means that all but one worker could add a task that
+  // shouldn't be added yet.
+  while (throttle_list_.total(std::memory_order::acquire) <
+         stats()->total_limit(std::memory_order::acquire)) {
     auto task = pop();
     if (!task) {
       return;
