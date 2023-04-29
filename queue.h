@@ -110,7 +110,7 @@ class Queue {
   };
 
   struct Flusher {
-    Flusher(Queue<T>* queue, std::mutex* mu) : queue_(queue) {
+    Flusher(Queue<T>* queue) : queue_(queue) {
       start_index_ = queue_->reserve_all_for_read(&num_reserved_);
     }
 
@@ -154,11 +154,25 @@ class Queue {
     }
   }
 
-  T push_back(T val) {
+  bool push_back(T val) {
+    return push_back(val, nullptr);
+  }
+
+  bool push_back(T val, size_t* num_items) {
     DCHECK(val);
     uint64_t expected = ht_.line.load(std::memory_order::relaxed);
     uint32_t head, tail;
+    size_t s = size(expected, buf_.size());
     do {
+      if (s == capacity()) {
+        if (num_items) {
+          *num_items = s;
+        }
+        return false;
+      } else if (num_items) {
+        *num_items = s + 1;
+      }
+
       head = HeadTail::to_head(expected);
       tail = HeadTail::to_tail(expected);
 
@@ -166,12 +180,6 @@ class Queue {
         tail = 0;
       } else {
         tail++;
-      }
-
-      if (tail == head) {
-        // Attempt to push on a full queue. Need to wait until something is
-        // popped.
-        return val;
       }
     } while (!ht_.line.compare_exchange_weak(
         expected, HeadTail::to_line(head, tail), std::memory_order::release,
@@ -190,7 +198,7 @@ class Queue {
       }
     }
 
-    return T{};
+    return true;
   }
 
   T pop_front() {
@@ -216,7 +224,7 @@ class Queue {
 
   size_t capacity() const { return buf_.size() - 1; }
 
-  Flusher flusher() { return Flusher(this, nullptr); }
+  Flusher flusher() { return Flusher(this); }
 
  private:
   union HeadTail {

@@ -12,9 +12,8 @@ void FIFOExecutorImpl::post(Executor::Func func) {
   auto* task = new Task{Task::Opts{}.set_func(func).set_executor(this)};
 
   task->set_state(Task::State::kQueuedExecutor);
-  task = fast_queue_.push_back(task);
 
-  if (task) {
+  if (!fast_queue_.push_back(task)) {
     std::lock_guard l{mu_};
     queue_.push(task);
   }
@@ -33,7 +32,7 @@ std::unique_ptr<Task> FIFOExecutorImpl::pop() {
     return nullptr;
   }
 
-  auto* p = std::move(queue_.front());
+  auto* p = queue_.front();
   queue_.pop();
 
   // Refill the fast queue halfway.
@@ -41,8 +40,7 @@ std::unique_ptr<Task> FIFOExecutorImpl::pop() {
     if (queue_.empty()) {
       break;
     }
-    auto* t = fast_queue_.push_back(std::move(queue_.front()));
-    if (t) {
+    if (!fast_queue_.push_back(queue_.front())) {
       queue_.front() = t;
       break;
     }

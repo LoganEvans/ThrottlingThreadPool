@@ -143,19 +143,15 @@ class Task {
 
  private:
   Opts opts_;
-  mutable std::mutex mutex_;
   rusage begin_ru_;
   timeval begin_tv_;
   State state_{State::kCreated};
   NicePriority nice_priority_{NicePriority::kNormal};
   Worker* worker_{nullptr};
 
-  std::shared_ptr<Task> prev_{nullptr};
-  std::shared_ptr<Task> next_{nullptr};
+  Task* prev_{nullptr};
+  Task* next_{nullptr};
   ThrottleList* throttle_list_{nullptr};
-
-  State state(const std::unique_lock<std::mutex>&) const;
-  State set_state(State state, const std::unique_lock<std::mutex>&);
 };
 
 template <typename T>
@@ -186,8 +182,8 @@ class TaskQueue {
   void push(std::unique_ptr<Task> task) {
     DCHECK(task);
 
-    auto v = queue_.push_back(task.release());
-    DCHECK(!v);
+    bool success = queue_.push_back(task.release());
+    DCHECK(success);
     sem_.release();
   }
 
@@ -234,18 +230,56 @@ class TaskQueue {
 
 class ThrottleList {
  public:
-  ThrottleList();
+  ThrottleList(size_t modification_queue_size);
 
-  void append(std::shared_ptr<Task> task);
-  void remove(Task* task);
+  void append(Task* task, std::unique_lock<std::mutex>& lock);
+  void remove(Task* task, std::unique_lock<std::mutex>& lock);
 
-  bool throttle_one();
-  bool unthrottle_one();
+  void throttle(size_t n, std::unique_lock<std::mutex>& lock);
+  void unthrottle(size_t n, std::unique_lock<std::mutex>& lock);
 
  private:
-  const std::shared_ptr<Task> head_;
-  const std::shared_ptr<Task> tail_;
-  std::shared_ptr<Task> throttle_head_;
+  struct Modification {
+    enum class Op : uintptr_t {
+      kAppend = 1,
+      kRemove = 2,
+      kThrottle = 3,
+      kUnthrottle = 4,
+    };
+
+    Modification() : data_(0) {}
+
+    Modification(Op op, Task* task)
+        : data_(static_cast<uintptr_t>(op) |
+                reinterpret_cast<uintptr_t>(task)) {}
+
+    Modification(Op op, size_t count)
+        : data_(static_cast<uintptr_t>(op) |
+                reinterpret_cast<uintptr_t>(count << 32)) {}
+
+    Op op() const { return static_cast<Op>(data_ & 0x7); }
+
+    Task* task() const { return reinterpret_cast<Task*>(data_ & ~0x7); }
+
+    size_t count() const { return reinterpret_cast<size_t>(data_ >> 32); }
+
+    operator bool() const { return static_cast<bool>(data_); }
+
+   private:
+    uintptr_t data_;
+  };
+
+  Task head_real_{Task::Opts{}};
+  Task tail_real_{Task::Opts{}};
+  Task* const head_{&head_real_};
+  Task* const tail_{&tail_real_};
+
+  Task* throttle_head_{tail_};
+
+  std::mutex mu_;
+  Queue<Modification> modification_queue_;
+
+  void flush_modifications(std::unique_lock<std::mutex>& lock);
 };
 
 }  // namespace theta

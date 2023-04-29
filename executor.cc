@@ -89,28 +89,19 @@ void ExecutorImpl::get_tv(timeval* tv) {
 }
 
 void ExecutorImpl::refill_queues() {
-  static std::mutex mu;
-  std::lock_guard l{mu};
+  std::unique_lock lock{mu_, std::defer_lock};
+  if (!lock.try_lock()) {
+    return;
+  }
 
   int running_limit = stats()->running_limit();
   int running_num = stats()->running_num();
 
   // Throttle a running task
-  while (running_num > running_limit) {
-    if (!throttle_list_.throttle_one()) {
-      break;
-    }
-
-    running_num--;
-  }
-
-  // Unthrottle a running task
-  while (running_num < running_limit) {
-    if (!throttle_list_.unthrottle_one()) {
-      break;
-    }
-
-    running_num++;
+  if (running_num > running_limit) {
+    throttle_list_.throttle(running_num - running_limit, lock);
+  } else if (running_num < running_limit) {
+    throttle_list_.unthrottle(running_limit - running_num, lock);
   }
 
   // Queue more tasks to run

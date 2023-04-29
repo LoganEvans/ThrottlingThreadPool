@@ -141,6 +141,7 @@ class ExecutorImpl {
   virtual ~ExecutorImpl() {}
   ExecutorImpl(Opts opts)
       : opts_(std::move(opts)),
+        throttle_list_(/*modification_queue_size=*/opts_.worker_limit()),
         stats_(/*run_state_is_normal=*/!opts_.require_low_latency()) {
     stats_.set_running_limit(opts_.thread_weight());
   }
@@ -169,6 +170,7 @@ class ExecutorImpl {
   ThrottleList throttle_list_;
 
   ExecutorStats stats_;
+  std::mutex mu_;
 
   int throttled_worker_limit() const;
 };
