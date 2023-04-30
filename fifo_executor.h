@@ -21,13 +21,14 @@ class FIFOExecutorImpl : public ExecutorImpl {
       : ExecutorImpl(opts), fast_queue_(QueueOpts{}) {}
 
  protected:
+  // TODO(lpe): This should be synchronized externally, not internally.
   std::unique_ptr<Task> pop() override;
 
  private:
   Queue<Task*> fast_queue_;
 
   std::mutex mu_;
-  std::queue<Task*> queue_;
+  std::queue<Task*> slow_queue_;
 };
 
 }  // namespace theta

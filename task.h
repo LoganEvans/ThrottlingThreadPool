@@ -213,8 +213,6 @@ class TaskQueue {
         return std::unique_ptr<Task>{v};
       }
 
-      CHECK(false);
-
       sem_.release(1);
     }
   }
@@ -322,7 +320,7 @@ class ThrottleList {
     }
 
     uint32_t running_limit() const {
-      return (line() >> kFieldBits) & kFieldMask;
+      return (line() >> kRunningLimitOffset) & kFieldMask;
     }
     void set_running_limit(uint64_t val, std::memory_order mem_order =
                                              std::memory_order::relaxed) {
@@ -330,9 +328,7 @@ class ThrottleList {
                   mem_order);
     }
 
-    uint32_t total() const {
-      return (line() >> (2 * kFieldBits)) & kFieldMask;
-    }
+    uint32_t total() const { return (line() >> kTotalOffset) & kFieldMask; }
     void set_total(uint64_t val,
                    std::memory_order mem_order = std::memory_order::relaxed) {
       line_.store((line() & ~kTotalMask) | (val << kTotalOffset), mem_order);

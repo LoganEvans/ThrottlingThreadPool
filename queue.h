@@ -48,11 +48,6 @@ concept ZeroableAtomType = requires(T t) {
 
 template <ZeroableAtomType T>
 class Queue {
-  static constexpr size_t next_pow_2(int v) {
-    int lg_v = 8 * sizeof(v) - __builtin_clz(v);
-    return 1 << lg_v;
-  }
-
  public:
   struct Iterator {
     using iterator_category = std::forward_iterator_tag;
@@ -141,6 +136,14 @@ class Queue {
     size_t start_index_{0};
     size_t num_reserved_{0};
   };
+
+  static constexpr size_t next_pow_2(int v) {
+    if ((v & (v - 1)) == 0) {
+      return v;
+    }
+    int lg_v = 8 * sizeof(v) - __builtin_clz(v);
+    return 1 << lg_v;
+  }
 
   Queue(QueueOpts opts)
       : ht_(/*head=*/0, /*tail=*/0), buf_(next_pow_2(opts.max_size())) {}

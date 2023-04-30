@@ -82,7 +82,7 @@ class ExecutorStats {
   std::atomic<int> finished_num_{0};
 
   std::atomic<int> running_limit_{0};
-  std::atomic<int> total_limit_{0};
+  std::atomic<int> total_limit_{1};
 
   std::atomic<double> ema_usage_proportion_{1.0};
 };

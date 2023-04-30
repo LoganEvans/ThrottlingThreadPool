@@ -61,6 +61,7 @@ void ExecutorStats::update_ema_usage_proportion(struct rusage* begin_ru,
                                                 struct timeval* begin_tv,
                                                 struct rusage* end_ru,
                                                 struct timeval* end_tv) {
+  // TODO(lpe): This should set the total_limit_ and the running_limit_...
   auto tvInterval = [](struct timeval* start, struct timeval* end) {
     double sec =
         (end->tv_sec - start->tv_sec) + (end->tv_usec - start->tv_usec) / 1e6;
@@ -103,7 +104,7 @@ void ExecutorImpl::refill_queues() {
   // race condition between checking how many tasks are queued and queuing
   // another one, which means that all but one worker could add a task that
   // shouldn't be added yet.
-  while (throttle_list_.total(std::memory_order::acquire) <
+  while (static_cast<int>(throttle_list_.total(std::memory_order::acquire)) <
          stats()->total_limit(std::memory_order::acquire)) {
     auto task = pop();
     if (!task) {
