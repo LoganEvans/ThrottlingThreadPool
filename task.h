@@ -128,7 +128,7 @@ class Task {
 
   static bool is_running_state(Task::State state);
 
-  static void run(ExecutorImpl* executor, std::unique_ptr<Task> task);
+  static void run(std::unique_ptr<Task> task);
 
   Task(Opts opts) : opts_(opts) {}
 
@@ -245,7 +245,6 @@ class ThrottleList {
     enum class Op : uintptr_t {
       kAppend = 1,
       kRemove = 2,
-      kSetRunningLimit = 3,
     };
 
     Modification() : data_(0) {}
@@ -254,17 +253,9 @@ class ThrottleList {
         : data_(static_cast<uintptr_t>(op) |
                 reinterpret_cast<uintptr_t>(task)) {}
 
-    Modification(uint64_t running_limit)
-        : data_(static_cast<uintptr_t>(Op::kSetRunningLimit) |
-                reinterpret_cast<uintptr_t>(running_limit << 32)) {}
-
     Op op() const { return static_cast<Op>(data_ & 0x3); }
 
     Task* task() const { return reinterpret_cast<Task*>(data_ & ~0x3); }
-
-    uint32_t running_limit() const {
-      return reinterpret_cast<size_t>(data_ >> 32);
-    }
 
     operator bool() const { return static_cast<bool>(data_); }
 
@@ -340,6 +331,7 @@ class ThrottleList {
   Queue<Modification> modification_queue_;
 
   void flush_modifications(std::unique_lock<std::mutex>& lock);
+  void adjust_throttle_head(std::unique_lock<std::mutex>&);
 };
 
 }  // namespace theta

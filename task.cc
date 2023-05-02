@@ -5,11 +5,13 @@
 namespace theta {
 
 /*static*/
-void Task::run(ExecutorImpl* executor, std::unique_ptr<Task> task) {
+void Task::run(std::unique_ptr<Task> task) {
+  ExecutorImpl* executor = task->opts().executor();
   std::unique_lock lock{executor->mu_, std::defer_lock};
   task->set_state(State::kRunning);
   executor->throttle_list_.append(task.get(), lock);
   task->opts().func()();
+  task->set_state(Task::State::kFinished);
   executor->throttle_list_.remove(task.release(), lock);
 }
 
@@ -61,7 +63,8 @@ Task::State Task::set_state(State state) {
     getrusage(RUSAGE_THREAD, &end_ru);
     timeval end_tv;
     ExecutorImpl::get_tv(&end_tv);
-    stats->update_ema_usage_proportion(&begin_ru_, &begin_tv_, &end_ru, &end_tv);
+    stats->update_ema_usage_proportion(&begin_ru_, &begin_tv_, &end_ru,
+                                       &end_tv);
 
     if (state == State::kThrottled) {
       stats->running_delta(-1);
@@ -129,7 +132,7 @@ void ThrottleList::remove(Task* task, std::unique_lock<std::mutex>& lock) {
     flush_modifications(lock);
   }
 
-  if (num_items >= modification_queue_.capacity() / 2 && lock.try_lock()) {
+  if (lock.try_lock()) {
     flush_modifications(lock);
     lock.unlock();
   }
@@ -142,8 +145,6 @@ void ThrottleList::set_running_limit(size_t running_limit,
     return;
   }
 
-  Modification mod{/*running_limit=*/running_limit};
-  modification_queue_.push_back(mod);
   flush_modifications(lock);
 }
 
@@ -154,11 +155,6 @@ void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
     lock.lock();
   }
 
-  Count count{count_, /*mem_order=*/std::memory_order::acquire};
-  uint32_t total = count.total();
-  uint32_t running = count.running();
-  uint32_t running_limit = count.running_limit();
-
   for (Modification mod : modification_queue_.flusher()) {
     Task* task{nullptr};
     switch (mod.op()) {
@@ -168,78 +164,55 @@ void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
         task->next_ = tail_;
         tail_->prev_->next_ = task;
         tail_->prev_ = task;
-
         DCHECK(task->state() == Task::State::kRunning);
-
-        if (throttle_head_ != tail_) {
-          task->set_state(Task::State::kThrottled);
-        } else if (running == running_limit) {
-          DCHECK(throttle_head_ == tail_);
-          task->set_state(Task::State::kThrottled);
-          throttle_head_ = task;
-        } else {
-          running++;
-        }
-
-        total++;
         break;
-      case Modification::Op::kRemove:
+      default:  // Modification::Op::kRemove:
         task = mod.task();
+        DCHECK(task->state() == Task::State::kFinished);
         task->next_->prev_ = task->prev_;
         task->prev_->next_ = task->next_;
-        total--;
 
         if (throttle_head_ == task) {
           throttle_head_ = task->next_;
-        }
-
-        if (task->state() == Task::State::kRunning) {
-          running--;
-          if (running != total) {
-            DCHECK(throttle_head_ != tail_);
-            throttle_head_->set_state(Task::State::kRunning);
-            throttle_head_ = throttle_head_->next_;
-            running++;
-          }
         }
 
         task->set_state(Task::State::kFinished);
         delete task;
 
         break;
-      default:
-        running_limit = mod.running_limit();
-
-        while (running < running_limit) {
-          if (throttle_head_ == tail_) {
-            break;
-          }
-          throttle_head_->set_state(Task::State::kRunning);
-          throttle_head_ = throttle_head_->next_;
-          running++;
-        }
-
-        while (running > running_limit) {
-          if (throttle_head_->prev_ == head_) {
-            break;
-          }
-          throttle_head_ = throttle_head_->prev_;
-          throttle_head_->set_state(Task::State::kThrottled);
-          running--;
-        }
-
-        break;
     };
   }
 
-  Count new_count{/*running=*/running, /*running_limit=*/running_limit,
-                  /*total=*/total};
-  count_.line_.store(new_count.line(), std::memory_order::release);
+  adjust_throttle_head(lock);
 
   if (was_locked && !lock) {
     lock.lock();
   } else if (!was_locked && lock) {
     lock.unlock();
+  }
+}
+
+void ThrottleList::adjust_throttle_head(std::unique_lock<std::mutex>&) {
+  Count count{count_, /*mem_order=*/std::memory_order::acquire};
+  uint32_t running = count.running();
+  uint32_t running_limit = count.running_limit();
+
+  while (running < running_limit) {
+    if (throttle_head_ == tail_) {
+      break;
+    }
+    throttle_head_->set_state(Task::State::kRunning);
+    throttle_head_ = throttle_head_->next_;
+    running++;
+  }
+
+  while (running > running_limit) {
+    if (throttle_head_->prev_ == head_) {
+      break;
+    }
+    throttle_head_ = throttle_head_->prev_;
+    throttle_head_->set_state(Task::State::kThrottled);
+    running--;
   }
 }
 

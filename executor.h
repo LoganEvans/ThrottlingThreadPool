@@ -66,7 +66,7 @@ class ExecutorStats {
                                    struct rusage* end_ru,
                                    struct timeval* end_tv);
 
- private:
+ //private:
   static constexpr double tau_ = 1.0;
 
   union Active {
@@ -149,9 +149,11 @@ class ExecutorImpl {
   static void get_tv(timeval* tv);
 
   virtual ~ExecutorImpl() {}
+
   ExecutorImpl(Opts opts)
       : opts_(std::move(opts)),
-        throttle_list_(/*modification_queue_size=*/opts_.worker_limit()) {}
+        throttle_list_(/*modification_queue_size=*/opts_.worker_limit()) {
+  }
 
   const Opts& opts() const { return opts_; }
 

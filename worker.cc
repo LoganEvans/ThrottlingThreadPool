@@ -69,7 +69,7 @@ void Worker::run_loop() {
 
     auto* executor = task->opts().executor();
     task->set_worker(this);
-    Task::run(executor, std::unique_ptr<Task>(task));
+    Task::run(std::unique_ptr<Task>(task));
     task = nullptr;
     executor->refill_queues(&task);
   }

@@ -103,7 +103,9 @@ void ExecutorImpl::get_tv(timeval* tv) {
 void ExecutorImpl::refill_queues(Task** take_first) {
   std::unique_lock lock{mu_, std::defer_lock};
 
-  DCHECK(!take_first || !*take_first);
+  if (take_first) {
+    *take_first = nullptr;
+  }
 
   // Queue more tasks to run
   while (stats()->reserve_active()) {

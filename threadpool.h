@@ -70,6 +70,8 @@ class ThrottlingThreadpool {
   void configure(const ConfigureOpts& opts);
 
   Executor create(Executor::Opts opts);
+  // TODO(lpe): Allow the Executor to clean itself up.
+  //void remove(ExecutorImpl* executor);
 
  private:
   ThrottlingThreadpool();
