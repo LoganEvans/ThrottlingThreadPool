@@ -57,8 +57,12 @@ pthread_t Worker::get_pthread() {
 }
 
 void Worker::run_loop() {
+  Task* task{nullptr};
   while (true) {
-    auto task = run_queue_->wait_pop();
+    fprintf(stderr, "> Worker::run_loop()\n");
+    if (!task) {
+      task = run_queue_->wait_pop().release();
+    }
     if (!task) {
       CHECK(run_queue_->is_shutting_down());
       return;
@@ -66,8 +70,10 @@ void Worker::run_loop() {
 
     auto* executor = task->opts().executor();
     task->set_worker(this);
-    Task::run(executor, std::move(task));
-    executor->refill_queues();
+    Task::run(executor, std::unique_ptr<Task>(task));
+    task = nullptr;
+    executor->refill_queues(&task);
+    fprintf(stderr, "< Worker::run_loop()\n");
   }
 }
 

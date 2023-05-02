@@ -16,13 +16,11 @@ TEST(FIFOExecutor, DISABLED_ctor) {
       Executor::Opts{}
           .set_priority_policy(PriorityPolicy::FIFO)
           .set_thread_weight(5)
-          .set_worker_limit(2)
-          .set_require_low_latency(true));
+          .set_worker_limit(2));
 
   EXPECT_EQ(executor.opts().priority_policy(), PriorityPolicy::FIFO);
   EXPECT_EQ(executor.opts().thread_weight(), 5);
   EXPECT_EQ(executor.opts().worker_limit(), 2);
-  EXPECT_EQ(executor.opts().require_low_latency(), true);
 }
 
 TEST(FIFOExecutor, DISABLED_post) {

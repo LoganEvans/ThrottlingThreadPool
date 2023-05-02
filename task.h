@@ -182,34 +182,43 @@ class TaskQueue {
   void push(std::unique_ptr<Task> task) {
     DCHECK(task);
 
+    fprintf(stderr, "> push() -- queue_.size(): %zu\n", queue_.size());
     bool success = queue_.push_back(task.release());
     DCHECK(success);
     sem_.release();
+    fprintf(stderr, "< push() -- queue_.size(): %zu\n", queue_.size());
   }
 
   std::unique_ptr<Task> maybe_pop() {
+    fprintf(stderr, "> maybe_pop() -- queue_.size(): %zu\n", queue_.size());
     if (!sem_.try_acquire()) {
+      fprintf(stderr, "< maybe_pop() -- queue_.size(): %zu\n", queue_.size());
       return nullptr;
     }
 
     auto* v = queue_.pop_front();
     if (!v) {
       sem_.release(1);
+      fprintf(stderr, "< maybe_pop() -- queue_.size(): %zu\n", queue_.size());
       return nullptr;
     }
 
+    fprintf(stderr, "< maybe_pop() -- queue_.size(): %zu\n", queue_.size());
     return std::unique_ptr<Task>{v};
   }
 
   std::unique_ptr<Task> wait_pop() {
+    fprintf(stderr, "> wait_pop() -- queue_.size(): %zu\n", queue_.size());
     while (true) {
       semaphoreAcquireKludge(sem_);
       if (shutdown_.load(std::memory_order_acquire)) {
+        fprintf(stderr, "< wait_pop() -- queue_.size(): %zu\n", queue_.size());
         return nullptr;
       }
 
       auto* v = queue_.pop_front();
       if (v) {
+        fprintf(stderr, "< wait_pop() -- queue_.size(): %zu\n", queue_.size());
         return std::unique_ptr<Task>{v};
       }
 
@@ -278,7 +287,7 @@ class ThrottleList {
   Task* const tail_{&tail_real_};
 
   Task* throttle_head_{tail_};
-  union Count {
+  struct Count {
     static constexpr int kFieldBits = 20;
     static constexpr uint64_t kFieldMask = (1ULL << kFieldBits) - 1;
 
@@ -295,11 +304,11 @@ class ThrottleList {
     static constexpr uint64_t kValidMask =
         kRunningMask | kRunningLimitMask | kTotalMask;
 
-    Count() = default;
-
     Count(uint64_t running, uint64_t running_limit, uint64_t total)
         : line_(running | (running_limit << kRunningLimitOffset) |
                 (total << kTotalOffset)) {}
+
+    Count() : Count(/*running=*/0, /*running_limit=*/1, /*total=*/0) {}
 
     Count(const Count& other,
           std::memory_order mem_order = std::memory_order::relaxed)

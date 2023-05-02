@@ -6,11 +6,30 @@
 
 namespace theta {
 
-// TODO(lpe): Get rid of run_state_is_normal_.
-ExecutorStats::ExecutorStats(bool run_state_is_normal)
-    : run_state_is_normal_(run_state_is_normal) {}
+bool ExecutorStats::reserve_active() {
+  uint64_t expected = active_.line.load(std::memory_order::acquire);
+  Active desired{0};
+  do {
+    desired = Active{expected};
+    desired.num.fetch_add(1, std::memory_order::relaxed);
+    if (desired.num.load(std::memory_order::relaxed) >
+        desired.limit.load(std::memory_order::relaxed)) {
+      return false;
+    }
+  } while (!active_.line.compare_exchange_weak(
+      expected, desired.line.load(std::memory_order::relaxed),
+      std::memory_order::release, std::memory_order::relaxed));
 
-bool ExecutorStats::run_state_is_normal() const { return run_state_is_normal_; }
+  return true;
+}
+
+void ExecutorStats::unreserve_active() {
+  active_.num.fetch_sub(1, std::memory_order::acq_rel);
+}
+
+void ExecutorStats::set_active_limit(uint32_t val) {
+  active_.limit.store(val, std::memory_order::release);
+}
 
 int ExecutorStats::running_num(std::memory_order mem_order) const {
   return running_num_.load(mem_order);
@@ -38,20 +57,6 @@ int ExecutorStats::finished_num(std::memory_order mem_order) const {
 }
 void ExecutorStats::finished_delta(int val) {
   finished_num_.fetch_add(val, std::memory_order::acq_rel);
-}
-
-int ExecutorStats::running_limit(std::memory_order mem_order) const {
-  return running_limit_.load(mem_order);
-}
-void ExecutorStats::set_running_limit(int val) {
-  running_limit_.store(val, std::memory_order::relaxed);
-}
-
-int ExecutorStats::total_limit(std::memory_order mem_order) const {
-  return total_limit_.load(mem_order);
-}
-void ExecutorStats::set_total_limit(int val) {
-  total_limit_.store(val, std::memory_order::relaxed);
 }
 
 double ExecutorStats::ema_usage_proportion() const {
@@ -94,25 +99,26 @@ void ExecutorImpl::get_tv(timeval* tv) {
   tv->tv_usec = usecs.count();
 }
 
-void ExecutorImpl::refill_queues() {
+void ExecutorImpl::refill_queues(Task** take_first) {
   std::unique_lock lock{mu_, std::defer_lock};
-  throttle_list_.set_running_limit(
-      stats()->running_limit(std::memory_order::acquire), lock);
+
+  DCHECK(!take_first || !*take_first);
 
   // Queue more tasks to run
-  // TODO(lpe): This has a potential for over-queueing tasks because there's a
-  // race condition between checking how many tasks are queued and queuing
-  // another one, which means that all but one worker could add a task that
-  // shouldn't be added yet.
-  while (static_cast<int>(throttle_list_.total(std::memory_order::acquire)) <
-         stats()->total_limit(std::memory_order::acquire)) {
-    auto task = pop();
+  while (stats()->reserve_active()) {
+    std::unique_ptr<Task> task = pop();
     if (!task) {
+      stats()->unreserve_active();
+      fprintf(stderr, "< refill_queues()\n");
       return;
     }
 
-    task->set_state(Task::State::kQueuedThreadpool);
-    opts().run_queue()->push(std::move(task));
+    if (take_first && !*take_first) {
+      *take_first = task.release();
+    } else {
+      task->set_state(Task::State::kQueuedThreadpool);
+      opts().run_queue()->push(std::move(task));
+    }
   }
 }
 

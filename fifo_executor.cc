@@ -24,11 +24,13 @@ void FIFOExecutorImpl::post(Executor::Func func) {
 std::unique_ptr<Task> FIFOExecutorImpl::pop() {
   auto* t = fast_queue_.pop_front();
   if (t) {
+    fprintf(stderr, "< pop() -- fast queue\n");
     return std::unique_ptr<Task>{t};
   }
 
   std::lock_guard l{mu_};
   if (slow_queue_.empty()) {
+    fprintf(stderr, "< pop() -- empty\n");
     return nullptr;
   }
 
@@ -41,12 +43,12 @@ std::unique_ptr<Task> FIFOExecutorImpl::pop() {
       break;
     }
     if (!fast_queue_.push_back(slow_queue_.front())) {
-      slow_queue_.front() = t;
       break;
     }
     slow_queue_.pop();
   }
 
+  fprintf(stderr, "< pop() -- refill\n");
   return std::unique_ptr<Task>{p};
 }
 

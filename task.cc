@@ -7,6 +7,7 @@ namespace theta {
 /*static*/
 void Task::run(ExecutorImpl* executor, std::unique_ptr<Task> task) {
   std::unique_lock lock{executor->mu_, std::defer_lock};
+  task->set_state(State::kRunning);
   executor->throttle_list_.append(task.get(), lock);
   task->opts().func()();
   executor->throttle_list_.remove(task.release(), lock);
@@ -30,6 +31,14 @@ Task::State Task::set_state(State state) {
     }
   } else if (old == State::kQueuedExecutor) {
     if (state == State::kQueuedThreadpool) {
+    } else if (state == State::kRunning) {
+      stats->waiting_delta(-1);
+      stats->running_delta(1);
+      worker_->set_nice_priority(opts().nice_priority());
+    } else if (state == State::kThrottled) {
+      stats->waiting_delta(-1);
+      stats->throttled_delta(1);
+      worker_->set_nice_priority(NicePriority::kThrottled);
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
@@ -160,6 +169,8 @@ void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
         tail_->prev_->next_ = task;
         tail_->prev_ = task;
 
+        DCHECK(task->state() == Task::State::kRunning);
+
         if (throttle_head_ != tail_) {
           task->set_state(Task::State::kThrottled);
         } else if (running == running_limit) {
@@ -167,7 +178,6 @@ void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
           task->set_state(Task::State::kThrottled);
           throttle_head_ = task;
         } else {
-          task->set_state(Task::State::kRunning);
           running++;
         }
 

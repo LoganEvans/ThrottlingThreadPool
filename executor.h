@@ -38,17 +38,20 @@ class FIFOExecutorImpl;
 
 class ExecutorStats {
  public:
-  ExecutorStats(bool run_state_is_normal);
+  ExecutorStats() : active_(/*num_=*/0, /*limit_=*/1) {}
 
-  bool run_state_is_normal() const;
+  bool reserve_active();
+  void unreserve_active();
 
-  int running_num(
-      std::memory_order mem_order = std::memory_order::relaxed) const;
-  void running_delta(int val);
+  void set_active_limit(uint32_t val);
 
   int waiting_num(
       std::memory_order mem_order = std::memory_order::relaxed) const;
   void waiting_delta(int val);
+
+  int running_num(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
+  void running_delta(int val);
 
   int throttled_num(
       std::memory_order mem_order = std::memory_order::relaxed) const;
@@ -58,14 +61,6 @@ class ExecutorStats {
       std::memory_order mem_order = std::memory_order::relaxed) const;
   void finished_delta(int val);
 
-  int running_limit(
-      std::memory_order mem_order = std::memory_order::relaxed) const;
-  void set_running_limit(int val);
-
-  int total_limit(
-      std::memory_order mem_order = std::memory_order::relaxed) const;
-  void set_total_limit(int val);
-
   double ema_usage_proportion() const;
   void update_ema_usage_proportion(struct rusage* begin_ru,
                                    struct timeval* begin_tv,
@@ -74,15 +69,30 @@ class ExecutorStats {
 
  private:
   static constexpr double tau_ = 1.0;
-  const bool run_state_is_normal_;
 
-  std::atomic<int> running_num_{0};
-  std::atomic<int> waiting_num_{0};
-  std::atomic<int> throttled_num_{0};
-  std::atomic<int> finished_num_{0};
+  union Active {
+    struct {
+      std::atomic<uint32_t> num{0};
+      std::atomic<uint32_t> limit{1};
+    };
+    std::atomic<uint64_t> line;
 
-  std::atomic<int> running_limit_{0};
-  std::atomic<int> total_limit_{1};
+    Active(uint32_t num_, uint32_t limit_) : num(num_), limit(limit_) {}
+    Active(uint64_t line_) : line(line_) {}
+    Active(const Active& other)
+        : Active(/*line_=*/other.line.load(std::memory_order::relaxed)) {}
+    Active& operator=(const Active& other) {
+      line.store(other.line.load(std::memory_order::relaxed));
+      return *this;
+    }
+  } active_;
+  static_assert(sizeof(Active) == sizeof(Active::line), "");
+
+  std::atomic<uint32_t> waiting_num_{0};
+  std::atomic<uint32_t> running_num_{0};
+  std::atomic<uint32_t> throttled_num_{0};
+
+  std::atomic<uint64_t> finished_num_{0};
 
   std::atomic<double> ema_usage_proportion_{1.0};
 };
@@ -113,12 +123,6 @@ class ExecutorOpts {
     return *this;
   }
 
-  bool require_low_latency() const { return require_low_latency_; }
-  ExecutorOpts& set_require_low_latency(bool val) {
-    require_low_latency_ = val;
-    return *this;
-  }
-
  protected:
   TaskQueue<>* run_queue() const { return run_queue_; }
   ExecutorOpts& set_run_queue(TaskQueue<>* val) {
@@ -130,7 +134,6 @@ class ExecutorOpts {
   PriorityPolicy priority_policy_{PriorityPolicy::FIFO};
   size_t thread_weight_{1};
   size_t worker_limit_{0};
-  bool require_low_latency_{false};
   TaskQueue<>* run_queue_{nullptr};
 };
 
@@ -149,10 +152,7 @@ class ExecutorImpl {
   virtual ~ExecutorImpl() {}
   ExecutorImpl(Opts opts)
       : opts_(std::move(opts)),
-        throttle_list_(/*modification_queue_size=*/opts_.worker_limit()),
-        stats_(/*run_state_is_normal=*/!opts_.require_low_latency()) {
-    stats_.set_running_limit(opts_.thread_weight());
-  }
+        throttle_list_(/*modification_queue_size=*/opts_.worker_limit()) {}
 
   const Opts& opts() const { return opts_; }
 
@@ -171,7 +171,7 @@ class ExecutorImpl {
   const ExecutorStats* stats() const { return &stats_; }
 
  protected:
-  void refill_queues();
+  void refill_queues(Task** take_first = nullptr);
 
  private:
   const Opts opts_;

@@ -138,9 +138,12 @@ class Queue {
   };
 
   static constexpr size_t next_pow_2(int v) {
-    if ((v & (v - 1)) == 0) {
-      return v;
-    }
+    // TODO(lpe): This fixes a bug shown in one of the unittests, but it also
+    // seems to expose odd behavior in some queue when it's left out. Uncomment
+    // these lines.
+    //if ((v & (v - 1)) == 0) {
+    //  return v;
+    //}
     int lg_v = 8 * sizeof(v) - __builtin_clz(v);
     return 1 << lg_v;
   }
@@ -176,8 +179,8 @@ class Queue {
         *num_items = s + 1;
       }
 
-      head = HeadTail::to_head(expected);
-      tail = HeadTail::to_tail(expected);
+      head = HeadTail{expected}.head;
+      tail = HeadTail{expected}.tail;
 
       if (tail == buf_.size() - 1) {
         tail = 0;
@@ -185,10 +188,10 @@ class Queue {
         tail++;
       }
     } while (!ht_.line.compare_exchange_weak(
-        expected, HeadTail::to_line(head, tail), std::memory_order::release,
-        std::memory_order::relaxed));
+        expected, HeadTail{head, tail}.line.load(std::memory_order::relaxed),
+        std::memory_order::release, std::memory_order::relaxed));
 
-    uint32_t index = HeadTail::to_tail(expected);
+    uint32_t index = HeadTail{expected}.tail;
 
     // It is possible that a pop operation has claimed this index but hasn't
     // yet performed its read.
@@ -231,30 +234,21 @@ class Queue {
 
  private:
   union HeadTail {
-    static constexpr uint64_t to_line(uint32_t head, uint32_t tail) {
-      return (static_cast<uint64_t>(head) << 32) | tail;
-    }
-
-    static constexpr uint32_t to_head(uint64_t line) { return line >> 32; }
-
-    static constexpr uint32_t to_tail(uint64_t line) {
-      return static_cast<uint32_t>(line);
-    }
-
     struct {
-      std::atomic<uint32_t> head;
-      std::atomic<uint32_t> tail;
+      uint32_t head;
+      uint32_t tail;
     };
     std::atomic<uint64_t> line;
 
-    HeadTail(uint32_t head, uint32_t tail) : line(to_line(head, tail)) {}
+    HeadTail(uint64_t line_) : line(line_) {}
+    HeadTail(uint32_t head_, uint32_t tail_) : head(head_), tail(tail_) {}
   } ht_;
 
   std::vector<std::atomic<T>> buf_;
 
   static inline constexpr size_t size(uint64_t line, size_t buf_size) {
-    uint32_t head = HeadTail::to_head(line);
-    uint32_t tail = HeadTail::to_tail(line);
+    uint32_t head = HeadTail(line).head;
+    uint32_t tail = HeadTail(line).tail;
     if (tail < head) {
       tail += buf_size;
     }
@@ -288,18 +282,20 @@ class Queue {
         return {};
       }
 
-      head = HeadTail::to_head(expected);
-      tail = HeadTail::to_tail(expected);
+      head = HeadTail(expected).head;
+      tail = HeadTail(expected).tail;
 
       head += num_items;
       if (head >= buf_.size()) {
         head -= buf_.size();
       }
     } while (!ht_.line.compare_exchange_weak(
-        expected, HeadTail::to_line(head, tail), std::memory_order::release,
-        std::memory_order::relaxed));
+        expected,
+        HeadTail(head, tail).line.load(
+            std::memory_order::relaxed),
+        std::memory_order::release, std::memory_order::relaxed));
 
-    return HeadTail::to_head(expected);
+    return HeadTail(expected).head;
   }
 };
 
