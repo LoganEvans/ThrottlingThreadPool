@@ -42,7 +42,6 @@ class ExecutorStats {
 
   bool reserve_active();
   void unreserve_active();
-
   void set_active_limit(uint32_t val);
 
   int waiting_num(

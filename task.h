@@ -182,43 +182,34 @@ class TaskQueue {
   void push(std::unique_ptr<Task> task) {
     DCHECK(task);
 
-    fprintf(stderr, "> push() -- queue_.size(): %zu\n", queue_.size());
     bool success = queue_.push_back(task.release());
     DCHECK(success);
     sem_.release();
-    fprintf(stderr, "< push() -- queue_.size(): %zu\n", queue_.size());
   }
 
   std::unique_ptr<Task> maybe_pop() {
-    fprintf(stderr, "> maybe_pop() -- queue_.size(): %zu\n", queue_.size());
     if (!sem_.try_acquire()) {
-      fprintf(stderr, "< maybe_pop() -- queue_.size(): %zu\n", queue_.size());
       return nullptr;
     }
 
     auto* v = queue_.pop_front();
     if (!v) {
       sem_.release(1);
-      fprintf(stderr, "< maybe_pop() -- queue_.size(): %zu\n", queue_.size());
       return nullptr;
     }
 
-    fprintf(stderr, "< maybe_pop() -- queue_.size(): %zu\n", queue_.size());
     return std::unique_ptr<Task>{v};
   }
 
   std::unique_ptr<Task> wait_pop() {
-    fprintf(stderr, "> wait_pop() -- queue_.size(): %zu\n", queue_.size());
     while (true) {
       semaphoreAcquireKludge(sem_);
       if (shutdown_.load(std::memory_order_acquire)) {
-        fprintf(stderr, "< wait_pop() -- queue_.size(): %zu\n", queue_.size());
         return nullptr;
       }
 
       auto* v = queue_.pop_front();
       if (v) {
-        fprintf(stderr, "< wait_pop() -- queue_.size(): %zu\n", queue_.size());
         return std::unique_ptr<Task>{v};
       }
 

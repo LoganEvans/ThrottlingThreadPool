@@ -59,7 +59,6 @@ pthread_t Worker::get_pthread() {
 void Worker::run_loop() {
   Task* task{nullptr};
   while (true) {
-    fprintf(stderr, "> Worker::run_loop()\n");
     if (!task) {
       task = run_queue_->wait_pop().release();
     }
@@ -73,7 +72,6 @@ void Worker::run_loop() {
     Task::run(executor, std::unique_ptr<Task>(task));
     task = nullptr;
     executor->refill_queues(&task);
-    fprintf(stderr, "< Worker::run_loop()\n");
   }
 }
 

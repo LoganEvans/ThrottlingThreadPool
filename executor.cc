@@ -57,6 +57,7 @@ int ExecutorStats::finished_num(std::memory_order mem_order) const {
 }
 void ExecutorStats::finished_delta(int val) {
   finished_num_.fetch_add(val, std::memory_order::acq_rel);
+  active_.num.fetch_sub(1, std::memory_order::acq_rel);
 }
 
 double ExecutorStats::ema_usage_proportion() const {
@@ -109,7 +110,6 @@ void ExecutorImpl::refill_queues(Task** take_first) {
     std::unique_ptr<Task> task = pop();
     if (!task) {
       stats()->unreserve_active();
-      fprintf(stderr, "< refill_queues()\n");
       return;
     }
 

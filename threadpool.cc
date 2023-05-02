@@ -24,9 +24,8 @@ ThrottlingThreadpool& ThrottlingThreadpool::getInstance() {
 
 void ThrottlingThreadpool::configure(
     const ThrottlingThreadpool::ConfigureOpts& opts) {
-  shared_mutex_.lock();
+  std::unique_lock l{shared_mutex_};
   opts_ = opts;
-  shared_mutex_.unlock();
 }
 
 Executor ThrottlingThreadpool::create(Executor::Opts opts) {
@@ -41,9 +40,10 @@ Executor ThrottlingThreadpool::create(Executor::Opts opts) {
 
   auto* ptr = impl.get();
 
-  shared_mutex_.lock();
-  executors_.push_back(std::move(impl));
-  shared_mutex_.unlock();
+  {
+    std::unique_lock l{shared_mutex_};
+    executors_.push_back(std::move(impl));
+  }
 
   Executor ex{ptr};
   return ex;
