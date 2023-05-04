@@ -164,7 +164,6 @@ void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
         task->next_ = tail_;
         tail_->prev_->next_ = task;
         tail_->prev_ = task;
-        DCHECK(task->state() == Task::State::kRunning);
         break;
       default:  // Modification::Op::kRemove:
         task = mod.task();

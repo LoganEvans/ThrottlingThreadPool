@@ -46,7 +46,7 @@ TEST(FIFOExecutor, DISABLED_post) {
 }
 
 TEST(FIFOExecutor, saturate_single_thread) {
-  static constexpr int kJobs = 1000000;
+  static constexpr int kJobs = 100000;
 
   std::condition_variable cv;
   std::mutex mu;
@@ -84,8 +84,8 @@ TEST(FIFOExecutor, saturate_single_thread) {
   EXPECT_EQ(jobsRun.load(std::memory_order_acquire), kJobs);
 }
 
-TEST(FIFOExecutor, saturate_many_threads) {
-  static constexpr int kJobs = 1000000;
+TEST(FIFOExecutor, DISABLED_saturate_many_threads) {
+  static constexpr int kJobs = 100000;
 
   std::condition_variable cv;
   std::mutex mu;

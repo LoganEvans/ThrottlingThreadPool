@@ -18,17 +18,21 @@ class FIFOExecutorImpl : public ExecutorImpl {
   void post(Func func) override;
 
   FIFOExecutorImpl(const Executor::Opts& opts)
-      : ExecutorImpl(opts), fast_queue_(QueueOpts{}) {}
+      : ExecutorImpl(opts),
+        fast_post_queue_(QueueOpts{}),
+        fast_pop_queue_(QueueOpts{}) {}
 
  protected:
-  // TODO(lpe): This should be synchronized externally, not internally.
   std::unique_ptr<Task> pop() override;
 
  private:
-  Queue<Task*> fast_queue_;
+  Queue<Task*> fast_post_queue_;
+  Queue<Task*> fast_pop_queue_;
 
   std::mutex mu_;
   std::queue<Task*> slow_queue_;
+
+  void shuffle_fifo_queues(Task* task_to_post, Task** task_to_pop);
 };
 
 }  // namespace theta

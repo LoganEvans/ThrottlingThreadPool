@@ -13,40 +13,73 @@ void FIFOExecutorImpl::post(Executor::Func func) {
 
   task->set_state(Task::State::kQueuedExecutor);
 
-  if (!fast_queue_.push_back(task)) {
-    std::lock_guard l{mu_};
-    slow_queue_.push(task);
+  if (!fast_post_queue_.push_back(task)) {
+    shuffle_fifo_queues(/*task_to_post=*/task, /*task_to_pop=*/nullptr);
   }
 
   refill_queues();
 }
 
 std::unique_ptr<Task> FIFOExecutorImpl::pop() {
-  auto* t = fast_queue_.pop_front();
-  if (t) {
-    return std::unique_ptr<Task>{t};
+  Task* task = fast_pop_queue_.pop_front();
+  if (!task) {
+    shuffle_fifo_queues(/*task_to_post=*/nullptr, /*task_to_pop=*/&task);
   }
+  return std::unique_ptr<Task>{task};
+}
 
+void FIFOExecutorImpl::shuffle_fifo_queues(Task* task_to_post,
+                                           Task** task_to_pop) {
   std::lock_guard l{mu_};
-  if (slow_queue_.empty()) {
-    return nullptr;
+
+  bool use_fast_pop_queue = true;
+
+  if (task_to_pop) {
+    // There is probably nothing here, but if there is, it's first priority.
+    *task_to_pop = fast_pop_queue_.pop_front();
+    if (!*task_to_pop && !slow_queue_.empty()) {
+      *task_to_pop = slow_queue_.front();
+      slow_queue_.pop();
+    }
   }
 
-  auto* p = slow_queue_.front();
-  slow_queue_.pop();
+  while (!slow_queue_.empty()) {
+    Task* task = slow_queue_.front();
 
-  // Refill the fast queue halfway.
-  for (size_t i = 0; i < fast_queue_.capacity() / 2; i++) {
-    if (slow_queue_.empty()) {
+    if (!fast_pop_queue_.push_back(task)) {
+      use_fast_pop_queue = false;
       break;
     }
-    if (!fast_queue_.push_back(slow_queue_.front())) {
-      break;
-    }
+
     slow_queue_.pop();
   }
 
-  return std::unique_ptr<Task>{p};
+  if (task_to_pop && !*task_to_pop) {
+    *task_to_pop = fast_post_queue_.pop_front();
+  }
+
+  while (true) {
+    Task* task = fast_post_queue_.pop_front();
+    if (!task) {
+      break;
+    }
+
+    if (use_fast_pop_queue) {
+      if (!fast_pop_queue_.push_back(task)) {
+        use_fast_pop_queue = false;
+      }
+    }
+
+    if (!use_fast_pop_queue) {
+      slow_queue_.push(task);
+    }
+  }
+
+  if (task_to_post) {
+    if (!use_fast_pop_queue || !fast_pop_queue_.push_back(task_to_post)) {
+      slow_queue_.push(task_to_post);
+    }
+  }
 }
 
 }  // namespace theta
