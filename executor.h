@@ -38,11 +38,13 @@ class FIFOExecutorImpl;
 
 class ExecutorStats {
  public:
-  ExecutorStats() : active_(/*num_=*/0, /*limit_=*/1) {}
+  ExecutorStats() : active_(/*num_=*/0, /*limit_=*/10) {}
 
   bool reserve_active();
   void unreserve_active();
   void set_active_limit(uint32_t val);
+  std::pair<int, int> active_num_limit(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
 
   int waiting_num(
       std::memory_order mem_order = std::memory_order::relaxed) const;
@@ -66,13 +68,15 @@ class ExecutorStats {
                                    struct rusage* end_ru,
                                    struct timeval* end_tv);
 
+  std::string debug_string() const;
+
  //private:
   static constexpr double tau_ = 1.0;
 
   union Active {
     struct {
-      std::atomic<uint32_t> num{0};
-      std::atomic<uint32_t> limit{1};
+      std::atomic<uint32_t> num;
+      std::atomic<uint32_t> limit;
     };
     std::atomic<uint64_t> line;
 

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <latch>
 #include <mutex>
 
 #include "gtest/gtest.h"
@@ -45,8 +46,8 @@ TEST(FIFOExecutor, DISABLED_post) {
   EXPECT_TRUE(jobRan.load(std::memory_order_acquire));
 }
 
-TEST(FIFOExecutor, saturate_single_thread) {
-  static constexpr int kJobs = 100000;
+TEST(FIFOExecutor, DISABLED_saturate_single_thread) {
+  static constexpr int kJobs = 10000000;
 
   std::condition_variable cv;
   std::mutex mu;
@@ -84,8 +85,8 @@ TEST(FIFOExecutor, saturate_single_thread) {
   EXPECT_EQ(jobsRun.load(std::memory_order_acquire), kJobs);
 }
 
-TEST(FIFOExecutor, DISABLED_saturate_many_threads) {
-  static constexpr int kJobs = 100000;
+TEST(FIFOExecutor, saturate_many_threads) {
+  static constexpr int kJobs = 1000000;
 
   std::condition_variable cv;
   std::mutex mu;
@@ -97,12 +98,12 @@ TEST(FIFOExecutor, DISABLED_saturate_many_threads) {
           .set_thread_weight(num_threads)
           .set_worker_limit(Executor::Opts::kNoWorkerLimit));
 
+  std::latch work_start{kJobs};
   std::unique_lock<std::mutex> lock{mu};
-  std::mutex jobMutex;
   std::atomic<int> jobsRun{0};
 
   auto job = std::function<void()>([&]() {
-    std::lock_guard l{jobMutex};
+    work_start.wait();
     int jobs = 1 + jobsRun.fetch_add(1, std::memory_order_acq_rel);
     if (jobs == kJobs) {
       lock.unlock();
@@ -110,12 +111,11 @@ TEST(FIFOExecutor, DISABLED_saturate_many_threads) {
     }
   });
 
-  jobMutex.lock();
   for (int i = 0; i < kJobs; i++) {
     executor.post(job);
   }
   auto now = Executor::Clock::now();
-  jobMutex.unlock();
+  work_start.count_down(kJobs);
 
   cv.wait_until(lock, now + 1s, [&]() {
     return jobsRun.load(std::memory_order_acquire) == kJobs;

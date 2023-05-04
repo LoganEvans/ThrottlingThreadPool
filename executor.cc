@@ -31,6 +31,13 @@ void ExecutorStats::set_active_limit(uint32_t val) {
   active_.limit.store(val, std::memory_order::release);
 }
 
+std::pair<int, int> ExecutorStats::active_num_limit(
+    std::memory_order mem_order) const {
+  Active a{/*line_=*/active_.line.load(mem_order)};
+  return {a.num.load(std::memory_order::relaxed),
+          a.limit.load(std::memory_order::relaxed)};
+}
+
 int ExecutorStats::running_num(std::memory_order mem_order) const {
   return running_num_.load(mem_order);
 }
@@ -88,6 +95,20 @@ void ExecutorStats::update_ema_usage_proportion(struct rusage* begin_ru,
   } while (!ema_usage_proportion_.compare_exchange_weak(
       expected, desired, std::memory_order::release,
       std::memory_order::relaxed));
+}
+
+std::string ExecutorStats::debug_string() const {
+  std::string s{"ExecutorStats{"};
+  auto [active_num, active_limit] = active_num_limit();
+  s += "active.num=" + std::to_string(active_num);
+  s += ", active.limit=" + std::to_string(active_limit);
+  s += ", waiting_num=" + std::to_string(waiting_num());
+  s += ", running_num=" + std::to_string(running_num());
+  s += ", throttled_num=" + std::to_string(throttled_num());
+  s += ", finished_num=" + std::to_string(finished_num());
+  s += ", ema_usage_proportion=" + std::to_string(ema_usage_proportion());
+  s += "}";
+  return s;
 }
 
 /*static*/

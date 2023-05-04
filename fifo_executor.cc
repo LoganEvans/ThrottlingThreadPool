@@ -21,6 +21,22 @@ void FIFOExecutorImpl::post(Executor::Func func) {
 }
 
 std::unique_ptr<Task> FIFOExecutorImpl::pop() {
+  // TODO(lpe): Remove this debug code.
+  static std::atomic<std::chrono::time_point<std::chrono::system_clock>>
+      last_print = std::chrono::system_clock::now();
+  static std::mutex mtx;
+  static constexpr auto threshold = std::chrono::microseconds{100000};
+
+  auto now = std::chrono::system_clock::now();
+  if (now - last_print.load(std::memory_order::acquire) > threshold) {
+    std::lock_guard l{mtx};
+    if (now - last_print.load(std::memory_order::acquire) > threshold) {
+      last_print.store(now, std::memory_order::release);
+      fprintf(stderr, "%s\n", stats()->debug_string().c_str());
+    }
+  }
+  // Remove to here.
+
   Task* task = fast_pop_queue_.pop_front();
   if (!task) {
     shuffle_fifo_queues(/*task_to_post=*/nullptr, /*task_to_pop=*/&task);
