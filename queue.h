@@ -233,6 +233,40 @@ class Queue {
   Flusher flusher() { return Flusher(this); }
 
  private:
+  // TODO(lpe): It's possible to make this structure naturally fall back to a
+  // traditional threadqueue, thereby removing the size limit. This would
+  // require 5 index values:
+  // head: Index of the next value to pop
+  // tail: Index where the next value should push
+  // split: If active, a point that splits the queue in half. If this happens,
+  //        the head index will always live in one half while the tail index will
+  //        always live in the other.
+  // fallback_tail: If in fallback mode, this index operates in the same half as the
+  //                head. It indicates where the next value popped from the
+  //                fallback queue should be placed.
+  // fallback_head: If in fallback mode, this indicates where the next value to
+  //                be placed in the fallback queue is located.
+  //
+  // This system requires all 5 values to be read atomically, so the fast-queue size
+  // will be limitted to 4096 values (12 bits). This leaves 4 bits, one of which can
+  // indicate whether the fallback mode is active.
+  //
+  // While in fallback mode, creating a Flusher object will need to refill the pop half
+  // of the queue. If a push or a pop operation reaches the fallback head/tail,
+  // then that operation will need to block while it offloads values into the
+  // fallback queue or pulls more values from the fallback queue.
+  //
+  // Moving from fast-mode to fallback-mode will involve taking the mutex in
+  // the push path, declaring the split point, and then moving the elements in
+  // the push half into the fallback-queue.
+  //
+  // Moving from fallback-mode to fast-mode will again involve taking the mutex, but then
+  // the two halves of the fast-queue will need to be stitched together by
+  // moving elements one half to the other half.
+  //
+  // It's not clear how thread-friendly the transition from fallback- to fast-mode can be.
+  // At the worst, it will be possible to set a bit that flags all operations to block.
+
   union HeadTail {
     struct {
       uint32_t head;
