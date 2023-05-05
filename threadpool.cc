@@ -30,6 +30,9 @@ void ThrottlingThreadpool::configure(
 
 Executor ThrottlingThreadpool::create(Executor::Opts opts) {
   opts.set_run_queue(&run_queue_);
+  if (opts.worker_limit() == ExecutorOpts::kNoWorkerLimit) {
+    opts.set_worker_limit(opts_.thread_limit());
+  }
   std::unique_ptr<ExecutorImpl> impl;
   if (opts.priority_policy() == PriorityPolicy::FIFO) {
     impl = std::unique_ptr<FIFOExecutorImpl>(

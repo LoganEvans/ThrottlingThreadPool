@@ -156,17 +156,15 @@ void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
   }
 
   for (Modification mod : modification_queue_.flusher()) {
-    Task* task{nullptr};
+    Task* task{mod.task()};
     switch (mod.op()) {
       case Modification::Op::kAppend:
-        task = mod.task();
         task->prev_ = tail_->prev_;
         task->next_ = tail_;
         tail_->prev_->next_ = task;
         tail_->prev_ = task;
         break;
       default:  // Modification::Op::kRemove:
-        task = mod.task();
         DCHECK(task->state() == Task::State::kFinished);
         task->next_->prev_ = task->prev_;
         task->prev_->next_ = task->next_;
