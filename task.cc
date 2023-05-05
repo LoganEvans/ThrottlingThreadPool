@@ -15,10 +15,12 @@ void Task::run(std::unique_ptr<Task> task) {
   executor->throttle_list_.remove(task.release(), lock);
 }
 
-Task::State Task::state() const { return state_; }
+Task::State Task::state(std::memory_order mem_order) const {
+  return state_.load(mem_order);
+}
 
 Task::State Task::set_state(State state) {
-  State old = state_;
+  State old = state_.load(std::memory_order::acquire);
   auto* executor = opts().executor();
   auto* stats = executor->stats();
 
@@ -36,11 +38,11 @@ Task::State Task::set_state(State state) {
     } else if (state == State::kRunning) {
       stats->waiting_delta(-1);
       stats->running_delta(1);
-      worker_->set_nice_priority(opts().nice_priority());
+      worker()->set_nice_priority(opts().nice_priority());
     } else if (state == State::kThrottled) {
       stats->waiting_delta(-1);
       stats->throttled_delta(1);
-      worker_->set_nice_priority(NicePriority::kThrottled);
+      worker()->set_nice_priority(NicePriority::kThrottled);
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
@@ -49,11 +51,11 @@ Task::State Task::set_state(State state) {
     if (state == State::kRunning) {
       stats->waiting_delta(-1);
       stats->running_delta(1);
-      worker_->set_nice_priority(opts().nice_priority());
+      worker()->set_nice_priority(opts().nice_priority());
     } else if (state == State::kThrottled) {
       stats->waiting_delta(-1);
       stats->throttled_delta(1);
-      worker_->set_nice_priority(NicePriority::kThrottled);
+      worker()->set_nice_priority(NicePriority::kThrottled);
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
@@ -69,14 +71,14 @@ Task::State Task::set_state(State state) {
     if (state == State::kThrottled) {
       stats->running_delta(-1);
       stats->throttled_delta(1);
-      worker_->set_nice_priority(NicePriority::kThrottled);
+      worker()->set_nice_priority(NicePriority::kThrottled);
     } else if (state == State::kFinished) {
       stats->running_delta(-1);
       stats->finished_delta(1);
-      state_ = State::kFinished;
-      worker_->set_nice_priority(NicePriority::kNormal);
-      worker_ = nullptr;
-      return state_;
+      state_.store(State::kFinished, std::memory_order::release);
+      worker()->set_nice_priority(NicePriority::kNormal);
+      set_worker(nullptr);
+      return State::kFinished;
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
@@ -85,14 +87,14 @@ Task::State Task::set_state(State state) {
     if (state == State::kRunning) {
       stats->throttled_delta(-1);
       stats->running_delta(1);
-      worker_->set_nice_priority(opts().nice_priority());
+      worker()->set_nice_priority(opts().nice_priority());
     } else if (state == State::kFinished) {
       stats->throttled_delta(-1);
       stats->finished_delta(1);
-      state_ = State::kFinished;
-      worker_->set_nice_priority(NicePriority::kNormal);
-      worker_ = nullptr;
-      return state_;
+      state_.store(State::kFinished, std::memory_order::release);
+      worker()->set_nice_priority(NicePriority::kNormal);
+      set_worker(nullptr);
+      return State::kFinished;
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
@@ -104,8 +106,16 @@ Task::State Task::set_state(State state) {
                  << " to " << static_cast<int>(state);
   }
 
-  state_ = state;
+  state_.store(state, std::memory_order::release);
   return state;
+}
+
+Worker* Task::worker(std::memory_order mem_order) const {
+  return worker_.load(mem_order);
+}
+
+void Task::set_worker(Worker* val, std::memory_order mem_order) {
+  worker_.store(val, mem_order);
 }
 
 ThrottleList::ThrottleList(size_t modification_queue_size)
@@ -173,7 +183,6 @@ void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
           throttle_head_ = task->next_;
         }
 
-        task->set_state(Task::State::kFinished);
         delete task;
 
         break;

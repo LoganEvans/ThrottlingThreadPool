@@ -3,6 +3,7 @@
 #include <glog/logging.h>
 
 #include <array>
+#include <random>
 
 #include "gtest/gtest.h"
 
@@ -97,6 +98,74 @@ TEST(Queue, flusher) {
     delete v;
   }
   EXPECT_EQ(expected, 110);
+}
+
+TEST(Queue, multithreaded_stress) {
+  static constexpr uint64_t kPushesPerThread = 100000;
+  static constexpr int kNumThreads = 4;
+  std::array<std::thread, kNumThreads> threads;
+  std::array<std::atomic<uint64_t>, kNumThreads> sums;
+
+  Queue<uint64_t*> queue{QueueOpts{}.set_max_size(32)};
+
+  for (int tx = 0; tx < kNumThreads; tx++) {
+    threads[tx] = std::thread(
+        [&](int tx) {
+          std::default_random_engine gen;
+          gen.seed(tx);
+          std::uniform_real_distribution<double> unif(0.0, 1.0);
+
+          uint64_t sum = 0;
+          uint64_t num_pushes = 0;
+
+          while (num_pushes < kPushesPerThread) {
+            double choice = unif(gen);
+            //if (choice < 0.1) {
+            //  for (auto* v : queue.flusher()) {
+            //    sum += *v;
+            //    delete v;
+            //  }
+            //} else
+            if (choice < 0.5) {
+              auto* v = queue.pop_front();
+              if (v) {
+                sum += *v;
+                delete v;
+              }
+            } else {
+              uint64_t* v = new uint64_t{num_pushes++};
+              while (!queue.push_back(v)) {
+                auto* other = queue.pop_front();
+                if (other) {
+                  sum += *other;
+                  delete other;
+                }
+              }
+            }
+          }
+
+          sums[tx].store(sum);
+        },
+        tx);
+  }
+
+  uint64_t total_sum = 0;
+  for (int tx = 0; tx < kNumThreads; tx++) {
+    threads[tx].join();
+    total_sum += sums[tx];
+  }
+
+  while (true) {
+    auto v = queue.pop_front();
+    if (!v) {
+      break;
+    }
+    total_sum += *v;
+    delete v;
+  }
+
+  EXPECT_EQ(total_sum,
+            kNumThreads * kPushesPerThread * (kPushesPerThread - 1) / 2);
 }
 
 }  // namespace theta

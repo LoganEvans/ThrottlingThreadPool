@@ -135,20 +135,26 @@ class Task {
   const Opts& opts() const { return opts_; }
   operator bool() const { return opts().func() != nullptr; }
 
-  State state() const;
+  State state(std::memory_order mem_order = std::memory_order::acquire) const;
   State set_state(State state);
 
-  Worker* worker() const { return worker_; }
-  void set_worker(Worker* val) { worker_ = val; }
+  Worker* worker(
+      std::memory_order mem_order = std::memory_order::acquire) const;
+  void set_worker(Worker* val,
+                  std::memory_order mem_order = std::memory_order::release);
 
  private:
+  // TODO(lpe): Make opts_, begin_ru_, and begin_tv_ const.
   Opts opts_;
   rusage begin_ru_;
   timeval begin_tv_;
-  State state_{State::kCreated};
-  NicePriority nice_priority_{NicePriority::kNormal};
-  Worker* worker_{nullptr};
 
+  std::atomic<State> state_{State::kCreated};
+  std::atomic<NicePriority> nice_priority_{NicePriority::kNormal};
+  std::atomic<Worker*> worker_{nullptr};
+
+  // These variables are only read while holding the associated
+  // ExecutorImpl::mu_.
   Task* prev_{nullptr};
   Task* next_{nullptr};
   ThrottleList* throttle_list_{nullptr};

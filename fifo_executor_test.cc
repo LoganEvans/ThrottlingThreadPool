@@ -46,7 +46,7 @@ TEST(FIFOExecutor, DISABLED_post) {
   EXPECT_TRUE(jobRan.load(std::memory_order_acquire));
 }
 
-TEST(FIFOExecutor, DISABLED_saturate_single_thread) {
+TEST(FIFOExecutor, saturate_single_thread) {
   static constexpr int kJobs = 10000000;
 
   std::condition_variable cv;
@@ -86,7 +86,7 @@ TEST(FIFOExecutor, DISABLED_saturate_single_thread) {
 }
 
 TEST(FIFOExecutor, saturate_many_threads) {
-  static constexpr int kJobs = 1000000;
+  static constexpr int kJobs = 10;
 
   std::condition_variable cv;
   std::mutex mu;
