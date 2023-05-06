@@ -121,8 +121,8 @@ void Task::set_worker(Worker* val, std::memory_order mem_order) {
 }
 
 ThrottleList::ThrottleList(size_t modification_queue_size)
-    : head_(new Task{Task::Opts{}}),
-      tail_(new Task{Task::Opts{}}),
+    : head_(&head_real_),
+      tail_(&tail_real_),
       throttle_head_(tail_),
       modification_queue_(QueueOpts{}.set_max_size(modification_queue_size)) {
   head_->next_ = tail_;
