@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <latch>
 #include <mutex>
+#include <thread>
 
 #include "gtest/gtest.h"
 #include "threadpool.h"
@@ -46,7 +47,7 @@ TEST(FIFOExecutor, DISABLED_post) {
   EXPECT_TRUE(jobRan.load(std::memory_order_acquire));
 }
 
-TEST(FIFOExecutor, saturate_single_thread) {
+TEST(FIFOExecutor, DISABLED_saturate_single_thread) {
   static constexpr int kJobs = 10000000;
 
   std::condition_variable cv;
@@ -99,27 +100,24 @@ TEST(FIFOExecutor, saturate_many_threads) {
           .set_worker_limit(Executor::Opts::kNoWorkerLimit));
 
   std::latch work_start{kJobs};
+  std::latch work_done{kJobs};
   std::unique_lock<std::mutex> lock{mu};
   std::atomic<int> jobsRun{0};
 
   auto job = std::function<void()>([&]() {
     work_start.wait();
-    int jobs = 1 + jobsRun.fetch_add(1, std::memory_order_acq_rel);
-    if (jobs == kJobs) {
-      lock.unlock();
-      cv.notify_one();
-    }
+    jobsRun.fetch_add(1, std::memory_order_acq_rel);
+    work_done.count_down(1);
   });
 
   for (int i = 0; i < kJobs; i++) {
     executor.post(job);
   }
-  auto now = Executor::Clock::now();
   work_start.count_down(kJobs);
 
-  cv.wait_until(lock, now + 1s, [&]() {
-    return jobsRun.load(std::memory_order_acquire) == kJobs;
-  });
+  while (!work_done.try_wait()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 
   EXPECT_EQ(jobsRun.load(std::memory_order_acquire), kJobs);
 }

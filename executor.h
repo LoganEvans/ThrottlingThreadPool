@@ -180,10 +180,10 @@ class ExecutorImpl {
 
  private:
   const Opts opts_;
+  std::mutex mtx_;
   ThrottleList throttle_list_;
 
   ExecutorStats stats_;
-  std::mutex mu_;
 
   int throttled_worker_limit() const;
 };

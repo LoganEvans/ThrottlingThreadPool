@@ -236,10 +236,9 @@ class ThrottleList {
  public:
   ThrottleList(size_t modification_queue_size);
 
-  void append(Task* task, std::unique_lock<std::mutex>& lock);
-  void remove(Task* task, std::unique_lock<std::mutex>& lock);
-  void set_running_limit(size_t running_limit,
-                         std::unique_lock<std::mutex>& lock);
+  void append(Task* task);
+  void remove(Task* task);
+  void set_running_limit(size_t running_limit);
 
   uint32_t total(
       std::memory_order mem_order = std::memory_order::relaxed) const {
@@ -335,8 +334,9 @@ class ThrottleList {
   } count_;
 
   Queue<Modification> modification_queue_;
+  std::mutex mtx_;
 
-  void flush_modifications(std::unique_lock<std::mutex>& lock);
+  void flush_modifications(bool wait_for_mtx = false);
   void adjust_throttle_head(std::unique_lock<std::mutex>&);
 };
 

@@ -7,12 +7,11 @@ namespace theta {
 /*static*/
 void Task::run(std::unique_ptr<Task> task) {
   ExecutorImpl* executor = task->opts().executor();
-  std::unique_lock lock{executor->mu_, std::defer_lock};
   task->set_state(State::kRunning);
-  executor->throttle_list_.append(task.get(), lock);
+  executor->throttle_list_.append(task.get());
   task->opts().func()();
   task->set_state(Task::State::kFinished);
-  executor->throttle_list_.remove(task.release(), lock);
+  executor->throttle_list_.remove(task.release());
 }
 
 Task::State Task::state(std::memory_order mem_order) const {
@@ -77,7 +76,6 @@ Task::State Task::set_state(State state) {
       stats->finished_delta(1);
       state_.store(State::kFinished, std::memory_order::release);
       worker()->set_nice_priority(NicePriority::kNormal);
-      set_worker(nullptr);
       return State::kFinished;
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
@@ -93,7 +91,6 @@ Task::State Task::set_state(State state) {
       stats->finished_delta(1);
       state_.store(State::kFinished, std::memory_order::release);
       worker()->set_nice_priority(NicePriority::kNormal);
-      set_worker(nullptr);
       return State::kFinished;
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
@@ -127,42 +124,41 @@ ThrottleList::ThrottleList(size_t modification_queue_size)
   tail_->prev_ = head_;
 }
 
-void ThrottleList::append(Task* task, std::unique_lock<std::mutex>& lock) {
+void ThrottleList::append(Task* task) {
   Modification mod{Modification::Op::kAppend, task};
   size_t num_items;
   while (!modification_queue_.push_back(mod, &num_items)) {
-    flush_modifications(lock);
+    flush_modifications();
   }
 }
 
-void ThrottleList::remove(Task* task, std::unique_lock<std::mutex>& lock) {
+void ThrottleList::remove(Task* task) {
   Modification mod{Modification::Op::kRemove, task};
   size_t num_items;
   while (!modification_queue_.push_back(mod, &num_items)) {
-    flush_modifications(lock);
+    flush_modifications();
   }
 
-  if (lock.try_lock()) {
-    flush_modifications(lock);
-    lock.unlock();
+  if (num_items > modification_queue_.capacity() / 2) {
+    flush_modifications();
   }
 }
 
-void ThrottleList::set_running_limit(size_t running_limit,
-                                     std::unique_lock<std::mutex>& lock) {
+void ThrottleList::set_running_limit(size_t running_limit) {
   Count count{count_, std::memory_order::acquire};
   if (count.running_limit() == running_limit) {
     return;
   }
 
-  flush_modifications(lock);
+  flush_modifications();
 }
 
-void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
-  bool was_locked = true;
-  if (!lock) {
-    was_locked = false;
+void ThrottleList::flush_modifications(bool wait_for_mtx) {
+  std::unique_lock<std::mutex> lock{mtx_, std::defer_lock};
+  if (wait_for_mtx) {
     lock.lock();
+  } else if (!lock.try_lock()) {
+    return;
   }
 
   for (Modification mod : modification_queue_.flusher()) {
@@ -190,12 +186,6 @@ void ThrottleList::flush_modifications(std::unique_lock<std::mutex>& lock) {
   }
 
   adjust_throttle_head(lock);
-
-  if (was_locked && !lock) {
-    lock.lock();
-  } else if (!was_locked && lock) {
-    lock.unlock();
-  }
 }
 
 void ThrottleList::adjust_throttle_head(std::unique_lock<std::mutex>&) {

@@ -122,7 +122,7 @@ void ExecutorImpl::get_tv(timeval* tv) {
 }
 
 void ExecutorImpl::refill_queues(Task** take_first) {
-  std::unique_lock lock{mu_, std::defer_lock};
+  std::unique_lock lock{mtx_, std::defer_lock};
 
   if (take_first) {
     *take_first = nullptr;
