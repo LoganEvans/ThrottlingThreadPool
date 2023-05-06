@@ -124,6 +124,7 @@ class Task {
     kRunning = 3,
     kThrottled = 4,
     kFinished = 5,
+    kRemoved = 6,
   };
 
   static bool is_running_state(Task::State state);
@@ -153,11 +154,10 @@ class Task {
   std::atomic<NicePriority> nice_priority_{NicePriority::kNormal};
   std::atomic<Worker*> worker_{nullptr};
 
-  // These variables are only read while holding the associated
-  // ExecutorImpl::mu_.
+  ThrottleList* throttle_list_{nullptr};
+  // These variables are only read while holding throttle_list_->mtx_.
   Task* prev_{nullptr};
   Task* next_{nullptr};
-  ThrottleList* throttle_list_{nullptr};
 };
 
 template <typename T>

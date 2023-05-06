@@ -57,99 +57,6 @@ concept ZeroableAtomType = requires(T t) {
 template <ZeroableAtomType T>
 class Queue {
  public:
-  struct Iterator {
-    using iterator_category = std::forward_iterator_tag;
-    using difference_type = std::ptrdiff_t;
-    using value_type = T;
-    using pointer = value_type*;
-    using reference = value_type&;
-
-    Iterator(Queue<T>* queue, size_t index) : queue_(queue), index_(index) {}
-
-    Iterator(const Iterator&) = delete;
-
-    value_type operator*() const {
-      value_type v = queue_->buf_[index_].load(std::memory_order::relaxed);
-      while (true) {
-        if (v) {
-          return v;
-        }
-        v = queue_->buf_[index_].load(std::memory_order::acquire);
-      }
-    }
-
-    pointer operator->() {
-      value_type v = queue_->buf_[index_].load(std::memory_order::relaxed);
-      while (true) {
-        if (v) {
-          return &queue_->buf_[index_].load(std::memory_order::relaxed);
-        }
-        v = queue_->buf_[index_].load(std::memory_order::acquire);
-      }
-    }
-
-    // Prefix increment
-    Iterator& operator++() {
-      index_++;
-      if (index_ >= queue_->buf_.size()) {
-        index_ = 0;
-      }
-      return *this;
-    }
-
-    friend bool operator==(const Iterator& a, const Iterator& b) {
-      return a.queue_ == b.queue_ && a.index_ == b.index_;
-    };
-
-    friend bool operator!=(const Iterator& a, const Iterator& b) {
-      return !(a == b);
-    };
-
-   private:
-    Queue<T>* const queue_{nullptr};
-    size_t start_index_{0};
-    size_t num_reserved_{0};
-    size_t index_{0};
-  };
-
-  struct Flusher {
-    Flusher(Queue<T>* queue) : queue_(queue) {
-      start_index_ = queue_->reserve_all_for_read(&num_reserved_);
-    }
-
-    ~Flusher() {
-      const size_t buf_size = queue_->buf_.size();
-      size_t cleared = 0;
-      size_t idx = start_index_;
-
-      while (cleared < num_reserved_) {
-        queue_->buf_[idx].store(T{}, std::memory_order::relaxed);
-        idx++;
-        if (idx == buf_size) {
-          idx = 0;
-        }
-        cleared++;
-      }
-
-      std::atomic_thread_fence(std::memory_order::release);
-    }
-
-    Iterator begin() const { return Iterator(queue_, start_index_); }
-
-    Iterator end() const {
-      size_t index = start_index_ + num_reserved_;
-      if (index >= queue_->buf_.size()) {
-        index -= queue_->buf_.size();
-      }
-      return Iterator(queue_, index);
-    }
-
-   private:
-    Queue<T>* const queue_;
-    size_t start_index_{0};
-    size_t num_reserved_{0};
-  };
-
   static constexpr size_t next_pow_2(int v) {
     if ((v & (v - 1)) == 0) {
       return v;
@@ -216,7 +123,7 @@ class Queue {
   }
 
   T pop_front() {
-    auto maybe_index = reserve_for_read(/*num_items=*/1);
+    auto maybe_index = reserve_for_pop();
     if (!maybe_index.has_value()) {
       return T{};
     }
@@ -237,8 +144,6 @@ class Queue {
   }
 
   size_t capacity() const { return buf_.size() - 1; }
-
-  Flusher flusher() { return Flusher(this); }
 
  private:
   // TODO(lpe): It's possible to make this structure naturally fall back to a
@@ -299,37 +204,18 @@ class Queue {
     return tail - head;
   }
 
-  uint32_t reserve_all_for_read(size_t* num_items) {
-    while (true) {
-      uint64_t line = ht_.line.load(std::memory_order::acquire);
-      size_t s = size(line, buf_.size());
-      auto reserved = reserve_for_read(s, line);
-      if (reserved) {
-        *num_items = s;
-        return reserved.value();
-      }
-    }
-  }
-
-  // If num_items are available, returns the starting index where items my be
-  // read. The caller must clear each of these items.
-  std::optional<uint32_t> reserve_for_read(size_t num_items) {
-    return reserve_for_read(num_items,
-                            ht_.line.load(std::memory_order::relaxed));
-  }
-
-  std::optional<uint32_t> reserve_for_read(size_t num_items, uint64_t line) {
-    uint64_t expected = line;
+  std::optional<uint32_t> reserve_for_pop() {
+    uint64_t expected;
     uint32_t head, tail;
     do {
-      if (size(expected, buf_.size()) < static_cast<size_t>(num_items)) {
+      expected = ht_.line.load(std::memory_order::acquire);
+      if (size(expected, buf_.size()) == 0) {
         return {};
       }
 
-      head = HeadTail(expected).head;
+      head = HeadTail(expected).head + 1;
       tail = HeadTail(expected).tail;
 
-      head += num_items;
       if (head >= buf_.size()) {
         head -= buf_.size();
       }

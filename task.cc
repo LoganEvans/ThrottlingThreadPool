@@ -97,7 +97,12 @@ Task::State Task::set_state(State state) {
                    << " to " << static_cast<int>(state);
     }
   } else if (old == State::kFinished) {
-    return State::kFinished;
+    if (state == State::kRemoved) {
+      state_.store(State::kRemoved, std::memory_order::release);
+    } else {
+      CHECK(false) << "Illegal transition from " << static_cast<int>(old)
+                   << " to " << static_cast<int>(state);
+    }
   } else {
     CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                  << " to " << static_cast<int>(state);
@@ -161,7 +166,11 @@ void ThrottleList::flush_modifications(bool wait_for_mtx) {
     return;
   }
 
-  for (Modification mod : modification_queue_.flusher()) {
+  while (true) {
+    Modification mod = modification_queue_.pop_front();
+    if (!mod) {
+      break;
+    }
     Task* task{mod.task()};
     switch (mod.op()) {
       case Modification::Op::kAppend:
@@ -169,11 +178,23 @@ void ThrottleList::flush_modifications(bool wait_for_mtx) {
         task->next_ = tail_;
         tail_->prev_->next_ = task;
         tail_->prev_ = task;
+        DCHECK(task->next_);
+        DCHECK(task->prev_);
         break;
       default:  // Modification::Op::kRemove:
         DCHECK(task->state() == Task::State::kFinished);
-        task->next_->prev_ = task->prev_;
-        task->prev_->next_ = task->next_;
+        task->set_state(Task::State::kRemoved);
+        if (task->next_ && task->prev_) {
+          DCHECK(task->next_);
+          DCHECK(task->prev_);
+          task->next_->prev_ = task->prev_;
+          task->prev_->next_ = task->next_;
+          task->next_ = nullptr;
+          task->prev_ = nullptr;
+        } else {
+          //CHECK(false);
+          fprintf(stderr, "error -- task already removed\n");
+        }
 
         if (throttle_head_ == task) {
           throttle_head_ = task->next_;

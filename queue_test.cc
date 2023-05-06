@@ -84,23 +84,6 @@ TEST(Queue, push_back_full) {
   }
 }
 
-TEST(Queue, flusher) {
-  static constexpr int kSize = 10;
-  Queue<int*> queue{QueueOpts{}};
-
-  for (int i = 0; i < kSize; i++) {
-    EXPECT_EQ(queue.size(), i);
-    EXPECT_TRUE(queue.push_back(new int{100 + i}));
-  }
-
-  int expected = 100;
-  for (auto* v : queue.flusher()) {
-    EXPECT_EQ(*v, expected++);
-    delete v;
-  }
-  EXPECT_EQ(expected, 110);
-}
-
 TEST(Queue, multithreaded_stress) {
   static constexpr uint64_t kPushesPerThread = 100000;
   static constexpr int kNumThreads = 4;
@@ -108,7 +91,6 @@ TEST(Queue, multithreaded_stress) {
   std::array<std::atomic<uint64_t>, kNumThreads> sums;
 
   Queue<uint64_t*> queue{QueueOpts{}.set_max_size(32)};
-  std::shared_mutex flusher_mtx;
 
   for (int tx = 0; tx < kNumThreads; tx++) {
     threads[tx] = std::thread(
@@ -122,14 +104,7 @@ TEST(Queue, multithreaded_stress) {
 
           while (num_pushes < kPushesPerThread) {
             double choice = unif(gen);
-            if (choice < 0.1) {
-              std::unique_lock l{flusher_mtx};
-              for (auto* v : queue.flusher()) {
-                sum += *v;
-                delete v;
-              }
-            } else if (choice < 0.5) {
-              std::shared_lock l{flusher_mtx};
+            if (choice < 0.5) {
               auto* v = queue.pop_front();
               if (v) {
                 sum += *v;

@@ -87,7 +87,7 @@ TEST(FIFOExecutor, DISABLED_saturate_single_thread) {
 }
 
 TEST(FIFOExecutor, saturate_many_threads) {
-  static constexpr int kJobs = 10;
+  static constexpr int kJobs = 1000000;
 
   std::condition_variable cv;
   std::mutex mu;
