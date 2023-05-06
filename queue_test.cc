@@ -4,6 +4,7 @@
 
 #include <array>
 #include <random>
+#include <shared_mutex>
 
 #include "gtest/gtest.h"
 
@@ -107,6 +108,7 @@ TEST(Queue, multithreaded_stress) {
   std::array<std::atomic<uint64_t>, kNumThreads> sums;
 
   Queue<uint64_t*> queue{QueueOpts{}.set_max_size(32)};
+  std::shared_mutex flusher_mtx;
 
   for (int tx = 0; tx < kNumThreads; tx++) {
     threads[tx] = std::thread(
@@ -120,13 +122,14 @@ TEST(Queue, multithreaded_stress) {
 
           while (num_pushes < kPushesPerThread) {
             double choice = unif(gen);
-            //if (choice < 0.1) {
-            //  for (auto* v : queue.flusher()) {
-            //    sum += *v;
-            //    delete v;
-            //  }
-            //} else
-            if (choice < 0.5) {
+            if (choice < 0.1) {
+              std::unique_lock l{flusher_mtx};
+              for (auto* v : queue.flusher()) {
+                sum += *v;
+                delete v;
+              }
+            } else if (choice < 0.5) {
+              std::shared_lock l{flusher_mtx};
               auto* v = queue.pop_front();
               if (v) {
                 sum += *v;

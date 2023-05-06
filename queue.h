@@ -11,6 +11,14 @@
 
 namespace theta {
 
+#ifdef __cpp_lib_hardware_interference_size
+using std::hardware_constructive_interference_size;
+using std::hardware_destructive_interference_size;
+#else
+constexpr std::size_t hardware_constructive_interference_size = 64;
+constexpr std::size_t hardware_destructive_interference_size = 64;
+#endif
+
 class QueueOpts {
  public:
   size_t max_size() const { return max_size_; }
@@ -20,7 +28,7 @@ class QueueOpts {
   }
 
  private:
-  size_t max_size_{512};
+  size_t max_size_{hardware_destructive_interference_size};
 };
 
 template <typename T>
@@ -106,17 +114,21 @@ class Queue {
 
   struct Flusher {
     Flusher(Queue<T>* queue) : queue_(queue) {
-      std::atomic_thread_fence(std::memory_order::acquire);
       start_index_ = queue_->reserve_all_for_read(&num_reserved_);
     }
 
     ~Flusher() {
       const size_t buf_size = queue_->buf_.size();
+      size_t cleared = 0;
+      size_t idx = start_index_;
 
-      size_t to_clear = std::min(buf_size - start_index_, num_reserved_);
-      memset(&queue_->buf_[start_index_], 0, to_clear * sizeof(T));
-      if (to_clear < num_reserved_) {
-        memset(&queue_->buf_[0], 0, (num_reserved_ - to_clear) * sizeof(T));
+      while (cleared < num_reserved_) {
+        queue_->buf_[idx].store(T{}, std::memory_order::relaxed);
+        idx++;
+        if (idx == buf_size) {
+          idx = 0;
+        }
+        cleared++;
       }
 
       std::atomic_thread_fence(std::memory_order::release);
@@ -289,7 +301,7 @@ class Queue {
 
   uint32_t reserve_all_for_read(size_t* num_items) {
     while (true) {
-      uint64_t line = ht_.line.load(std::memory_order::relaxed);
+      uint64_t line = ht_.line.load(std::memory_order::acquire);
       size_t s = size(line, buf_.size());
       auto reserved = reserve_for_read(s, line);
       if (reserved) {
