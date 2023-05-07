@@ -66,7 +66,9 @@ class Queue {
   }
 
   Queue(QueueOpts opts)
-      : ht_(/*head=*/0, /*tail=*/0), buf_(next_pow_2(opts.max_size())) {}
+      : ht_(/*head=*/0, /*tail=*/0), buf_(next_pow_2(opts.max_size())) {
+    CHECK(capacity());
+  }
 
   ~Queue() {
     while (true) {

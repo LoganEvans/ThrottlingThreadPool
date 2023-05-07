@@ -135,6 +135,10 @@ void ThrottleList::append(Task* task) {
   while (!modification_queue_.push_back(mod, &num_items)) {
     flush_modifications();
   }
+
+  if (num_items > modification_queue_.capacity() / 2) {
+    flush_modifications();
+  }
 }
 
 void ThrottleList::remove(Task* task) {
@@ -184,17 +188,10 @@ void ThrottleList::flush_modifications(bool wait_for_mtx) {
       default:  // Modification::Op::kRemove:
         DCHECK(task->state() == Task::State::kFinished);
         task->set_state(Task::State::kRemoved);
-        if (task->next_ && task->prev_) {
-          DCHECK(task->next_);
-          DCHECK(task->prev_);
-          task->next_->prev_ = task->prev_;
-          task->prev_->next_ = task->next_;
-          task->next_ = nullptr;
-          task->prev_ = nullptr;
-        } else {
-          //CHECK(false);
-          fprintf(stderr, "error -- task already removed\n");
-        }
+        task->next_->prev_ = task->prev_;
+        task->prev_->next_ = task->next_;
+        task->next_ = nullptr;
+        task->prev_ = nullptr;
 
         if (throttle_head_ == task) {
           throttle_head_ = task->next_;

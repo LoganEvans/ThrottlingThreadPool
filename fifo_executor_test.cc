@@ -47,11 +47,8 @@ TEST(FIFOExecutor, DISABLED_post) {
   EXPECT_TRUE(jobRan.load(std::memory_order_acquire));
 }
 
-TEST(FIFOExecutor, DISABLED_saturate_single_thread) {
-  static constexpr int kJobs = 10000000;
-
-  std::condition_variable cv;
-  std::mutex mu;
+TEST(FIFOExecutor, saturate_single_thread) {
+  static constexpr int kJobs = 1000000;
 
   Executor executor = ThrottlingThreadpool::getInstance().create(
       Executor::Opts{}
@@ -59,38 +56,30 @@ TEST(FIFOExecutor, DISABLED_saturate_single_thread) {
           .set_thread_weight(1)
           .set_worker_limit(1));
 
-  std::unique_lock<std::mutex> lock{mu};
-  std::mutex jobMutex;
+  std::latch work_start{kJobs};
+  std::latch work_done{kJobs};
   std::atomic<int> jobsRun{0};
 
   auto job = std::function<void()>([&]() {
-    std::lock_guard l{jobMutex};
-    int jobs = 1 + jobsRun.fetch_add(1, std::memory_order_acq_rel);
-    if (jobs == kJobs) {
-      lock.unlock();
-      cv.notify_one();
-    }
+    work_start.wait();
+    jobsRun.fetch_add(1, std::memory_order_acq_rel);
+    work_done.count_down(1);
   });
 
-  jobMutex.lock();
   for (int i = 0; i < kJobs; i++) {
     executor.post(job);
   }
-  auto now = Executor::Clock::now();
-  jobMutex.unlock();
+  work_start.count_down(kJobs);
 
-  cv.wait_until(lock, now + 1s, [&]() {
-    return jobsRun.load(std::memory_order_acquire) == kJobs;
-  });
+  while (!work_done.try_wait()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 
   EXPECT_EQ(jobsRun.load(std::memory_order_acquire), kJobs);
 }
 
 TEST(FIFOExecutor, saturate_many_threads) {
   static constexpr int kJobs = 1000000;
-
-  std::condition_variable cv;
-  std::mutex mu;
 
   auto num_threads = std::thread::hardware_concurrency();
   Executor executor = ThrottlingThreadpool::getInstance().create(
@@ -101,7 +90,6 @@ TEST(FIFOExecutor, saturate_many_threads) {
 
   std::latch work_start{kJobs};
   std::latch work_done{kJobs};
-  std::unique_lock<std::mutex> lock{mu};
   std::atomic<int> jobsRun{0};
 
   auto job = std::function<void()>([&]() {
