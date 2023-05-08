@@ -4,6 +4,7 @@
 
 #include "benchmark/benchmark.h"
 #include "queue.h"
+#include "semaphore.h"
 #include "threadpool.h"
 
 namespace theta {
@@ -40,13 +41,13 @@ static void BM_queue(benchmark::State &state) {
 
 using CustomSemaphore = Semaphore;
 BENCHMARK_TEMPLATE(BM_queue, TaskQueue<CustomSemaphore>)
-    //->Threads(1)
-    ->Threads(2);
-    //->Threads(10);
-//BENCHMARK_TEMPLATE(BM_queue, TaskQueue<std::counting_semaphore<100>>)
-//    ->Threads(1)
-//    ->Threads(2)
-//    ->Threads(10);
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(10);
+BENCHMARK_TEMPLATE(BM_queue, TaskQueue<std::counting_semaphore<100>>)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(10);
 
 template <typename SemaphoreType>
 static void BM_semaphore(benchmark::State &state) {
@@ -58,10 +59,35 @@ static void BM_semaphore(benchmark::State &state) {
   }
 }
 
-//BENCHMARK_TEMPLATE(BM_semaphore, CustomSemaphore)->Threads(1)->Threads(2);
-//BENCHMARK_TEMPLATE(BM_semaphore, std::counting_semaphore<100>)
-//    ->Threads(1)
-//    ->Threads(2);
+BENCHMARK_TEMPLATE(BM_semaphore, CustomSemaphore)->Threads(1)->Threads(2);
+BENCHMARK_TEMPLATE(BM_semaphore, std::counting_semaphore<100>)
+    ->Threads(1)
+    ->Threads(2);
+
+static void BM_empty_tasks(benchmark::State &state) {
+  Executor executor = ThrottlingThreadpool::getInstance().create(
+      Executor::Opts{}
+          .set_priority_policy(PriorityPolicy::FIFO)
+          .set_thread_weight(state.range(0))
+          .set_worker_limit(state.range(0)));
+
+  int jobs_posted{0};
+  std::atomic<int> jobs_run{0};
+
+  auto job = std::function<void()>([&]() {
+    jobs_run.fetch_add(1, std::memory_order::acq_rel);
+  });
+
+  for (auto _ : state) {
+    executor.post(job);
+    jobs_posted++;
+  }
+
+  while (jobs_run.load(std::memory_order::acquire) < jobs_posted) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+BENCHMARK(BM_empty_tasks)->Args({1})->Args({2})->Args({11});
 
 }  // namespace theta
 

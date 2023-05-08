@@ -157,7 +157,9 @@ class ExecutorImpl {
   ExecutorImpl(Opts opts)
       : opts_(std::move(opts)),
         throttle_list_(
-            /*modification_queue_size=*/std::max(64UL, opts_.worker_limit())) {}
+            /*modification_queue_size=*/std::max(64UL, opts_.worker_limit())) {
+    stats_.set_active_limit(opts_.worker_limit());
+  }
 
   const Opts& opts() const { return opts_; }
 

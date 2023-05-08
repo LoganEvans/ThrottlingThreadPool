@@ -11,7 +11,7 @@ namespace theta {
 //
 // See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=104928
 template <typename SemaphoreType>
-void semaphoreAcquireKludge(SemaphoreType& sem) {
+inline void semaphoreAcquireKludge(SemaphoreType& sem) {
   while (!sem.try_acquire_until(std::chrono::system_clock::now() +
                                 std::chrono::milliseconds(100))) {
   }
@@ -86,7 +86,7 @@ class Semaphore {
 };
 
 template <>
-void semaphoreAcquireKludge(Semaphore& sem) {
+inline void semaphoreAcquireKludge(Semaphore& sem) {
   sem.acquire();
 }
 
