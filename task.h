@@ -131,7 +131,7 @@ class Task {
 
   static void run(std::unique_ptr<Task> task);
 
-  Task(Opts opts) : opts_(opts) {}
+  Task(Opts opts);
 
   const Opts& opts() const { return opts_; }
   operator bool() const { return opts().func() != nullptr; }
@@ -146,18 +146,19 @@ class Task {
 
  private:
   // TODO(lpe): Make opts_, begin_ru_, and begin_tv_ const.
-  Opts opts_;
+  const Opts opts_;
   rusage begin_ru_;
   timeval begin_tv_;
 
   std::atomic<State> state_{State::kCreated};
-  std::atomic<NicePriority> nice_priority_{NicePriority::kNormal};
   std::atomic<Worker*> worker_{nullptr};
 
   ThrottleList* throttle_list_{nullptr};
   // These variables are only read while holding throttle_list_->mtx_.
   Task* prev_{nullptr};
   Task* next_{nullptr};
+
+  void begin_ru_tv();
 };
 
 template <typename T>

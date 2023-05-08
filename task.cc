@@ -14,6 +14,15 @@ void Task::run(std::unique_ptr<Task> task) {
   executor->throttle_list_.remove(task.release());
 }
 
+Task::Task(Opts opts)
+    : opts_(opts),
+      state_(State::kCreated),
+      worker_(nullptr),
+      throttle_list_(nullptr),
+      prev_(nullptr),
+      next_(nullptr) {
+}
+
 Task::State Task::state(std::memory_order mem_order) const {
   return state_.load(mem_order);
 }
@@ -35,6 +44,7 @@ Task::State Task::set_state(State state) {
   } else if (old == State::kQueuedExecutor) {
     if (state == State::kQueuedThreadpool) {
     } else if (state == State::kRunning) {
+      begin_ru_tv();
       stats->waiting_delta(-1);
       stats->running_delta(1);
       worker()->set_nice_priority(opts().nice_priority());
@@ -48,6 +58,7 @@ Task::State Task::set_state(State state) {
     }
   } else if (old == State::kQueuedThreadpool) {
     if (state == State::kRunning) {
+      begin_ru_tv();
       stats->waiting_delta(-1);
       stats->running_delta(1);
       worker()->set_nice_priority(opts().nice_priority());
@@ -83,6 +94,7 @@ Task::State Task::set_state(State state) {
     }
   } else if (old == State::kThrottled) {
     if (state == State::kRunning) {
+      begin_ru_tv();
       stats->throttled_delta(-1);
       stats->running_delta(1);
       worker()->set_nice_priority(opts().nice_priority());
@@ -118,6 +130,11 @@ Worker* Task::worker(std::memory_order mem_order) const {
 
 void Task::set_worker(Worker* val, std::memory_order mem_order) {
   worker_.store(val, mem_order);
+}
+
+void Task::begin_ru_tv() {
+  ExecutorImpl::get_tv(&begin_tv_);
+  getrusage(RUSAGE_THREAD, &begin_ru_);
 }
 
 ThrottleList::ThrottleList(size_t modification_queue_size)

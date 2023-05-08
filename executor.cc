@@ -76,14 +76,18 @@ void ExecutorStats::update_ema_usage_proportion(struct rusage* begin_ru,
                                                 struct timeval* end_tv) {
   // TODO(lpe): This should set the total_limit_ and the running_limit_...
   auto tvInterval = [](struct timeval* start, struct timeval* end) {
-    double sec =
-        (end->tv_sec - start->tv_sec) + (end->tv_usec - start->tv_usec) / 1e6;
+    double sec = ((end->tv_sec * 1000000 + end->tv_usec) -
+                  (start->tv_sec * 1000000 + start->tv_usec)) /
+                 1e6;
     return sec / tau_;
   };
 
   double interval = tvInterval(begin_tv, end_tv);
   double usage = tvInterval(&begin_ru->ru_utime, &end_ru->ru_utime);
-  double proportion = usage / interval;
+  double proportion = interval ? usage / interval : 0.0;
+  //if (proportion > 0.0) {
+  //  fprintf(stderr, "??? %lf, %lf, %lf\n", interval, usage, proportion);
+  //}
 
   double expected = ema_usage_proportion();
   double desired;
