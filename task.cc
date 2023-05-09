@@ -75,8 +75,7 @@ Task::State Task::set_state(State state) {
     getrusage(RUSAGE_THREAD, &end_ru);
     timeval end_tv;
     ExecutorImpl::get_tv(&end_tv);
-    stats->update_ema_usage_proportion(&begin_ru_, &begin_tv_, &end_ru,
-                                       &end_tv);
+    stats->update_ema(&begin_ru_, &begin_tv_, &end_ru, &end_tv);
 
     if (state == State::kThrottled) {
       stats->running_delta(-1);

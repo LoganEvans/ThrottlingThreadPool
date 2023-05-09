@@ -81,13 +81,16 @@ static void BM_empty_tasks(benchmark::State &state) {
   for (auto _ : state) {
     executor.post(job);
     jobs_posted++;
+
+    while (jobs_posted - jobs_run.load(std::memory_order::acquire) > 1000) {
+    }
   }
 
   while (jobs_run.load(std::memory_order::acquire) < jobs_posted) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 }
-BENCHMARK(BM_empty_tasks)->Args({1})->Args({2})->Args({11});
+BENCHMARK(BM_empty_tasks)->Args({1})->Args({2})->Args({11})->Args({100});
 
 }  // namespace theta
 

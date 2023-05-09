@@ -62,11 +62,14 @@ class ExecutorStats {
       std::memory_order mem_order = std::memory_order::relaxed) const;
   void finished_delta(int val);
 
-  double ema_usage_proportion() const;
-  void update_ema_usage_proportion(struct rusage* begin_ru,
-                                   struct timeval* begin_tv,
-                                   struct rusage* end_ru,
-                                   struct timeval* end_tv);
+  double ema_usage_proportion(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
+  double ema_nivcsw(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
+  double ema_runtime_sec(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
+  void update_ema(struct rusage* begin_ru, struct timeval* begin_tv,
+                  struct rusage* end_ru, struct timeval* end_tv);
 
   std::string debug_string() const;
 
@@ -98,6 +101,8 @@ class ExecutorStats {
   std::atomic<uint64_t> finished_num_{0};
 
   std::atomic<double> ema_usage_proportion_{1.0};
+  std::atomic<double> ema_nivcsw_{0.0};
+  std::atomic<double> ema_runtime_sec_{0.0};
 };
 
 class ExecutorOpts {
@@ -187,7 +192,7 @@ class ExecutorImpl {
 
   ExecutorStats stats_;
 
-  int throttled_worker_limit() const;
+  void refresh_limits();
 };
 
 class Executor {
