@@ -113,7 +113,7 @@ cc_library(
     ":worker",
   ],
   copts = COPTS,
-  linkopts = ["-lpthread"],
+  linkopts = ["-latomic", "-lpthread"],
 )
 
 cc_library(

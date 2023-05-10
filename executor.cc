@@ -71,63 +71,58 @@ double ExecutorStats::ema_usage_proportion(std::memory_order mem_order) const {
   return ema_usage_proportion_.load(mem_order);
 }
 
-double ExecutorStats::ema_nivcsw(std::memory_order mem_order) const {
-  return ema_nivcsw_.load(mem_order);
-}
-
-double ExecutorStats::ema_runtime_sec(std::memory_order mem_order) const {
-  return ema_runtime_sec_.load(mem_order);
+double ExecutorStats::ema_nivcsw_per_task(std::memory_order mem_order) const {
+  return ema_nivcsw_per_task_.load(mem_order);
 }
 
 void ExecutorStats::update_ema(struct rusage* begin_ru,
                                struct timeval* begin_tv, struct rusage* end_ru,
                                struct timeval* end_tv) {
+  static constexpr double kTau = 1.0;  // I.e., average events per second.
+
   auto tvInterval = [](struct timeval* start, struct timeval* end) {
     double sec = ((end->tv_sec * 1000000 + end->tv_usec) -
                   (start->tv_sec * 1000000 + start->tv_usec)) /
                  1e6;
-    return sec / tau_;
+    return sec / kTau;
   };
-
-  double alpha = 1.0 - exp(-tvInterval(begin_tv, end_tv) / tau_);
 
   {
     double interval = tvInterval(begin_tv, end_tv);
+    double alpha = 1.0 - exp(-interval / kTau);
     double usage = tvInterval(&begin_ru->ru_utime, &end_ru->ru_utime);
     double proportion = interval ? usage / interval : 0.0;
 
     double expected = ema_usage_proportion(std::memory_order::relaxed);
     double desired;
     do {
-      desired= expected + alpha * (proportion - expected);
+      desired = expected + alpha * (proportion - expected);
     } while (!ema_usage_proportion_.compare_exchange_weak(
         expected, desired, std::memory_order::release,
         std::memory_order::relaxed));
   }
 
-  {
+  do {
+    timeval last_update_tv = ema_last_update_.load(std::memory_order::acquire);
+    double interval = tvInterval(&last_update_tv, end_tv);
+    ema_last_update_.compare_exchange_strong(last_update_tv, *end_tv,
+                                             std::memory_order::release,
+                                             std::memory_order::relaxed);
+    if (last_update_tv.tv_sec == 0) {
+      break;
+    }
+
+    double alpha = 1.0 - exp(-interval / kTau);
     int64_t delta_nivcsw = end_ru->ru_nivcsw - begin_ru->ru_nivcsw;
-    double expected = ema_nivcsw(std::memory_order::relaxed);
+
+    double expected = ema_nivcsw_per_task(std::memory_order::relaxed);
     double desired;
     do {
       desired = expected + alpha * (delta_nivcsw - expected);
-    } while (!ema_nivcsw_.compare_exchange_weak(expected, desired,
+    } while (!ema_nivcsw_per_task_.compare_exchange_weak(expected, desired,
                                                 std::memory_order::release,
                                                 std::memory_order::relaxed));
-  }
-
-  {
-    double sec = ((end_tv->tv_sec * 1000000 + end_tv->tv_usec) -
-                  (begin_tv->tv_sec * 1000000 + begin_tv->tv_usec)) /
-                 1e6;
-    double expected = ema_runtime_sec(std::memory_order::relaxed);
-    double desired;
-    do {
-      desired = expected + alpha * (sec - expected);
-    } while (!ema_runtime_sec_.compare_exchange_weak(
-        expected, desired, std::memory_order::release,
-        std::memory_order::relaxed));
-  }
+  } while (0);
 }
 
 std::string ExecutorStats::debug_string() const {
@@ -140,8 +135,7 @@ std::string ExecutorStats::debug_string() const {
   s += ", throttled=" + std::to_string(throttled_num());
   s += ", finished=" + std::to_string(finished_num());
   s += ", ema_usage_proportion=" + std::to_string(ema_usage_proportion());
-  s += ", ema_nivcsw=" + std::to_string(ema_nivcsw());
-  s += ", ema_runtime_sec=" + std::to_string(ema_runtime_sec());
+  s += ", ema_nivcsw_per_task=" + std::to_string(ema_nivcsw_per_task());
   s += "}";
   return s;
 }
@@ -186,12 +180,12 @@ void ExecutorImpl::refresh_limits() {
       concurrency / stats_.ema_usage_proportion(std::memory_order::acquire);
   stats_.set_active_limit(std::min(active_limit, opts_.worker_limit()));
 
-  double ema_nivcsw = stats_.ema_nivcsw(std::memory_order::acquire);
-  double ema_runtime_sec = stats_.ema_runtime_sec(std::memory_order::acquire);
-  if (ema_nivcsw > 0.0 && ema_runtime_sec <= 0.0) {
-    double jobs_per_interrupt = ema_nivcsw / ema_runtime_sec;
+  double ema_nivcsw_per_task =
+      stats_.ema_nivcsw_per_task(std::memory_order::acquire);
+  if (ema_nivcsw_per_task > 0.0) {
+    double tasks_per_interrupt = 1.0 / ema_nivcsw_per_task;
     throttle_list_.set_running_limit(std::max(
-        static_cast<size_t>(jobs_per_interrupt), opts_.thread_weight()));
+        static_cast<size_t>(tasks_per_interrupt), opts_.thread_weight()));
   }
 }
 

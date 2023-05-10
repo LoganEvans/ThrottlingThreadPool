@@ -38,7 +38,11 @@ class FIFOExecutorImpl;
 
 class ExecutorStats {
  public:
-  ExecutorStats() : active_(/*num_=*/0, /*limit_=*/10) {}
+  ExecutorStats()
+      : active_(/*num_=*/0, /*limit_=*/10) {
+    ema_last_update_.store(timeval{.tv_sec = 0, .tv_usec = 0},
+                           std::memory_order::relaxed);
+  }
 
   bool reserve_active();
   void unreserve_active();
@@ -64,9 +68,7 @@ class ExecutorStats {
 
   double ema_usage_proportion(
       std::memory_order mem_order = std::memory_order::relaxed) const;
-  double ema_nivcsw(
-      std::memory_order mem_order = std::memory_order::relaxed) const;
-  double ema_runtime_sec(
+  double ema_nivcsw_per_task(
       std::memory_order mem_order = std::memory_order::relaxed) const;
   void update_ema(struct rusage* begin_ru, struct timeval* begin_tv,
                   struct rusage* end_ru, struct timeval* end_tv);
@@ -74,8 +76,6 @@ class ExecutorStats {
   std::string debug_string() const;
 
  //private:
-  static constexpr double tau_ = 1.0;
-
   union Active {
     struct {
       std::atomic<uint32_t> num;
@@ -101,8 +101,8 @@ class ExecutorStats {
   std::atomic<uint64_t> finished_num_{0};
 
   std::atomic<double> ema_usage_proportion_{1.0};
-  std::atomic<double> ema_nivcsw_{0.0};
-  std::atomic<double> ema_runtime_sec_{0.0};
+  std::atomic<double> ema_nivcsw_per_task_{0.0};
+  std::atomic<timeval> ema_last_update_;
 };
 
 class ExecutorOpts {
