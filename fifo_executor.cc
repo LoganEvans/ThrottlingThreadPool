@@ -32,7 +32,7 @@ std::unique_ptr<Task> FIFOExecutorImpl::pop() {
     std::lock_guard l{mtx};
     if (now - last_print.load(std::memory_order::acquire) > threshold) {
       last_print.store(now, std::memory_order::release);
-      fprintf(stderr, "%s\n", stats()->debug_string().c_str());
+      fprintf(stderr, "%s\n", debug_string().c_str());
     }
   }
   // Remove to here.

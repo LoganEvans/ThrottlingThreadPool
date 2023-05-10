@@ -38,17 +38,10 @@ class FIFOExecutorImpl;
 
 class ExecutorStats {
  public:
-  ExecutorStats()
-      : active_(/*num_=*/0, /*limit_=*/10) {
+  ExecutorStats() {
     ema_last_update_.store(timeval{.tv_sec = 0, .tv_usec = 0},
                            std::memory_order::relaxed);
   }
-
-  bool reserve_active();
-  void unreserve_active();
-  void set_active_limit(uint32_t val);
-  std::pair<int, int> active_num_limit(
-      std::memory_order mem_order = std::memory_order::relaxed) const;
 
   int waiting_num(
       std::memory_order mem_order = std::memory_order::relaxed) const;
@@ -75,25 +68,7 @@ class ExecutorStats {
 
   std::string debug_string() const;
 
- //private:
-  union Active {
-    struct {
-      std::atomic<uint32_t> num;
-      std::atomic<uint32_t> limit;
-    };
-    std::atomic<uint64_t> line;
-
-    Active(uint32_t num_, uint32_t limit_) : num(num_), limit(limit_) {}
-    Active(uint64_t line_) : line(line_) {}
-    Active(const Active& other)
-        : Active(/*line_=*/other.line.load(std::memory_order::relaxed)) {}
-    Active& operator=(const Active& other) {
-      line.store(other.line.load(std::memory_order::relaxed));
-      return *this;
-    }
-  } active_;
-  static_assert(sizeof(Active) == sizeof(Active::line), "");
-
+ private:
   std::atomic<uint32_t> waiting_num_{0};
   std::atomic<uint32_t> running_num_{0};
   std::atomic<uint32_t> throttled_num_{0};
@@ -161,10 +136,9 @@ class ExecutorImpl {
 
   ExecutorImpl(Opts opts)
       : opts_(std::move(opts)),
+        active_(/*num_=*/0, /*limit_=*/opts_.worker_limit()),
         throttle_list_(
-            /*modification_queue_size=*/std::max(64UL, opts_.worker_limit())) {
-    stats_.set_active_limit(opts_.worker_limit());
-  }
+            /*modification_queue_size=*/std::max(64UL, opts_.worker_limit())) {}
 
   const Opts& opts() const { return opts_; }
 
@@ -182,15 +156,41 @@ class ExecutorImpl {
   ExecutorStats* stats() { return &stats_; }
   const ExecutorStats* stats() const { return &stats_; }
 
+  std::string debug_string() const;
+
  protected:
   void refill_queues(Task** take_first = nullptr);
 
  private:
+  union Active {
+    struct {
+      std::atomic<uint32_t> num;
+      std::atomic<uint32_t> limit;
+    };
+    std::atomic<uint64_t> line;
+
+    Active(uint32_t num_, uint32_t limit_) : num(num_), limit(limit_) {}
+    Active(uint64_t line_) : line(line_) {}
+    Active(const Active& other)
+        : Active(/*line_=*/other.line.load(std::memory_order::relaxed)) {}
+    Active& operator=(const Active& other) {
+      line.store(other.line.load(std::memory_order::relaxed));
+      return *this;
+    }
+  };
+  static_assert(sizeof(Active) == sizeof(Active::line), "");
+
   const Opts opts_;
-  std::mutex mtx_;
+  Active active_;
   ThrottleList throttle_list_;
 
   ExecutorStats stats_;
+
+  bool reserve_active();
+  void unreserve_active();
+  void set_active_limit(uint32_t val);
+  std::pair<int, int> active_num_limit(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
 
   void refresh_limits();
 };

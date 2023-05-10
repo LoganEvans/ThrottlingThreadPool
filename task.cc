@@ -84,6 +84,7 @@ Task::State Task::set_state(State state) {
     } else if (state == State::kFinished) {
       stats->running_delta(-1);
       stats->finished_delta(1);
+      executor->unreserve_active();
       state_.store(State::kFinished, std::memory_order::release);
       worker()->set_nice_priority(NicePriority::kNormal);
       return State::kFinished;
@@ -100,6 +101,7 @@ Task::State Task::set_state(State state) {
     } else if (state == State::kFinished) {
       stats->throttled_delta(-1);
       stats->finished_delta(1);
+      executor->unreserve_active();
       state_.store(State::kFinished, std::memory_order::release);
       worker()->set_nice_priority(NicePriority::kNormal);
       return State::kFinished;
