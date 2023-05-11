@@ -124,7 +124,6 @@ class Task {
     kRunning = 3,
     kThrottled = 4,
     kFinished = 5,
-    kRemoved = 6,
   };
 
   static bool is_running_state(Task::State state);
@@ -275,8 +274,8 @@ class ThrottleList {
   Task tail_real_{Task::Opts{}};
   Task* const head_{&head_real_};
   Task* const tail_{&tail_real_};
-
   Task* throttle_head_{tail_};
+
   struct Count {
     static constexpr int kFieldBits = 20;
     static constexpr uint64_t kFieldMask = (1ULL << kFieldBits) - 1;
@@ -320,19 +319,14 @@ class ThrottleList {
       line_.store((line() & ~kRunningMask) | (val << kRunningOffset),
                   mem_order);
     }
-    void running_delta(int delta) {
-      // TODO(lpe): This could use a fetch_add and some bit manipulation.
-      uint64_t expected_line{line(std::memory_order::relaxed)};
-      uint64_t desired_line;
-      do {
-        Count count{/*line=*/expected_line};
-        int running =
-            delta + static_cast<int>(count.running(std::memory_order::relaxed));
-        count.set_running(running, std::memory_order::relaxed);
-        desired_line = count.line(std::memory_order::relaxed);
-      } while (!line_.compare_exchange_weak(expected_line, desired_line,
-                                            std::memory_order::release,
-                                            std::memory_order::relaxed));
+    uint32_t running_delta(int delta) {
+      if (delta > 0) {
+        return delta + line_.fetch_add(delta << kRunningOffset,
+                                       std::memory_order::acq_rel);
+      } else {
+        return (-delta) + line_.fetch_sub((-delta) << kRunningOffset,
+                                          std::memory_order::acq_rel);
+      }
     }
 
     uint32_t running_limit(
@@ -352,6 +346,17 @@ class ThrottleList {
     void set_total(uint64_t val,
                    std::memory_order mem_order = std::memory_order::relaxed) {
       line_.store((line() & ~kTotalMask) | (val << kTotalOffset), mem_order);
+    }
+    uint32_t total_delta(int delta) {
+      if (delta > 0) {
+        return delta +
+               line_.fetch_add(static_cast<uint64_t>(delta) << kTotalOffset,
+                               std::memory_order::acq_rel);
+      } else {
+        return -delta +
+               line_.fetch_sub(static_cast<uint64_t>(-delta) << kTotalOffset,
+                               std::memory_order::acq_rel);
+      }
     }
 
     std::atomic<uint64_t> line_{0};

@@ -7,10 +7,10 @@ namespace theta {
 /*static*/
 void Task::run(std::unique_ptr<Task> task) {
   ExecutorImpl* executor = task->opts().executor();
-  task->set_state(State::kRunning);
+  task->set_state(Task::State::kRunning);
   executor->throttle_list_.append(task.get());
   task->opts().func()();
-  task->set_state(Task::State::kFinished);
+  executor->unreserve_active();
   executor->throttle_list_.remove(task.release());
 }
 
@@ -84,7 +84,6 @@ Task::State Task::set_state(State state) {
     } else if (state == State::kFinished) {
       stats->running_delta(-1);
       stats->finished_delta(1);
-      executor->unreserve_active();
       state_.store(State::kFinished, std::memory_order::release);
       worker()->set_nice_priority(NicePriority::kNormal);
       return State::kFinished;
@@ -101,17 +100,9 @@ Task::State Task::set_state(State state) {
     } else if (state == State::kFinished) {
       stats->throttled_delta(-1);
       stats->finished_delta(1);
-      executor->unreserve_active();
       state_.store(State::kFinished, std::memory_order::release);
       worker()->set_nice_priority(NicePriority::kNormal);
       return State::kFinished;
-    } else {
-      CHECK(false) << "Illegal transition from " << static_cast<int>(old)
-                   << " to " << static_cast<int>(state);
-    }
-  } else if (old == State::kFinished) {
-    if (state == State::kRemoved) {
-      state_.store(State::kRemoved, std::memory_order::release);
     } else {
       CHECK(false) << "Illegal transition from " << static_cast<int>(old)
                    << " to " << static_cast<int>(state);
@@ -194,32 +185,58 @@ void ThrottleList::flush_modifications(bool wait_for_mtx) {
     return;
   }
 
+  uint32_t running_limit = count_.running_limit(std::memory_order::relaxed);
   while (true) {
     Modification mod = modification_queue_.pop_front();
     if (!mod) {
       break;
     }
+
+    auto total = count_.total_delta(1);
+
     Task* task{mod.task()};
     switch (mod.op()) {
       case Modification::Op::kAppend:
+        total = count_.total_delta(1);
+
         task->prev_ = tail_->prev_;
         task->next_ = tail_;
         tail_->prev_->next_ = task;
         tail_->prev_ = task;
+
+        if (throttle_head_ != tail_) {
+          task->set_state(Task::State::kThrottled);
+        } else if (total > running_limit) {
+          throttle_head_ = task;
+          task->set_state(Task::State::kThrottled);
+        } else {
+          task->set_state(Task::State::kRunning);
+          count_.running_delta(1);
+        }
+
         DCHECK(task->next_);
         DCHECK(task->prev_);
         break;
       default:  // Modification::Op::kRemove:
-        DCHECK(task->state() == Task::State::kFinished);
-        task->set_state(Task::State::kRemoved);
+        total = count_.total_delta(-1);
+
         task->next_->prev_ = task->prev_;
         task->prev_->next_ = task->next_;
-        task->next_ = nullptr;
-        task->prev_ = nullptr;
 
-        if (throttle_head_ == task) {
+        auto state = task->state();
+        if (state == Task::State::kRunning) {
+          DCHECK(throttle_head_ != task);
+
+          if (throttle_head_ != tail_) {
+            throttle_head_ = throttle_head_->next_;
+          } else {
+            count_.running_delta(-1);
+          }
+        } else if (task == throttle_head_) {
           throttle_head_ = task->next_;
         }
+
+        task->set_state(Task::State::kFinished);
 
         delete task;
 
@@ -234,8 +251,6 @@ void ThrottleList::adjust_throttle_head(std::unique_lock<std::mutex>&) {
   Count count{count_, /*mem_order=*/std::memory_order::acquire};
   uint32_t running = count.running();
   uint32_t running_limit = count.running_limit();
-  fprintf(stderr, "> adjust_throttle_head() -- running: %u, limit: %u\n",
-          running, running_limit);
 
   while (running < running_limit) {
     if (throttle_head_ == tail_) {
@@ -254,8 +269,6 @@ void ThrottleList::adjust_throttle_head(std::unique_lock<std::mutex>&) {
     throttle_head_->set_state(Task::State::kThrottled);
     running--;
   }
-  fprintf(stderr, "< adjust_throttle_head() -- running: %u, limit: %u\n",
-          running, running_limit);
 }
 
 }  // namespace theta

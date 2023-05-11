@@ -191,8 +191,9 @@ void ExecutorImpl::refresh_limits() {
       stats_.ema_nivcsw_per_task(std::memory_order::acquire);
   if (ema_nivcsw_per_task > 0.0) {
     double tasks_per_interrupt = 1.0 / ema_nivcsw_per_task;
-    throttle_list_.set_running_limit(std::max(
-        static_cast<size_t>(tasks_per_interrupt), opts_.thread_weight()));
+    throttle_list_.set_running_limit(std::min(
+        opts_.worker_limit(), std::max(static_cast<size_t>(tasks_per_interrupt),
+                                       opts_.thread_weight())));
   }
 }
 

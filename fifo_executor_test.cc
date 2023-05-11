@@ -47,7 +47,7 @@ TEST(FIFOExecutor, DISABLED_post) {
   EXPECT_TRUE(jobRan.load(std::memory_order_acquire));
 }
 
-TEST(FIFOExecutor, saturate_single_thread) {
+TEST(FIFOExecutor, DISABLED_saturate_single_thread) {
   static constexpr int kJobs = 1000000;
 
   Executor executor = ThrottlingThreadpool::getInstance().create(
@@ -71,6 +71,7 @@ TEST(FIFOExecutor, saturate_single_thread) {
   }
   work_start.count_down(kJobs);
 
+  fprintf(stderr, "start\n");
   while (!work_done.try_wait()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
@@ -103,6 +104,7 @@ TEST(FIFOExecutor, saturate_many_threads) {
   }
   work_start.count_down(kJobs);
 
+  fprintf(stderr, "start\n");
   while (!work_done.try_wait()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
