@@ -171,11 +171,17 @@ void ThrottleList::remove(Task* task) {
   }
 }
 
-void ThrottleList::set_running_limit(size_t running_limit) {
+uint32_t ThrottleList::running_limit(std::memory_order mem_order) const {
+  Count count{count_, mem_order};
+  return count.running_limit();
+}
+
+void ThrottleList::set_running_limit(size_t limit) {
   Count count{count_, std::memory_order::acquire};
-  if (count.running_limit() == running_limit) {
+  if (count.running_limit() == limit) {
     return;
   }
+  count_.set_running_limit(limit, std::memory_order::release);
 
   flush_modifications();
 }
@@ -228,6 +234,8 @@ void ThrottleList::adjust_throttle_head(std::unique_lock<std::mutex>&) {
   Count count{count_, /*mem_order=*/std::memory_order::acquire};
   uint32_t running = count.running();
   uint32_t running_limit = count.running_limit();
+  fprintf(stderr, "> adjust_throttle_head() -- running: %u, limit: %u\n",
+          running, running_limit);
 
   while (running < running_limit) {
     if (throttle_head_ == tail_) {
@@ -246,6 +254,8 @@ void ThrottleList::adjust_throttle_head(std::unique_lock<std::mutex>&) {
     throttle_head_->set_state(Task::State::kThrottled);
     running--;
   }
+  fprintf(stderr, "< adjust_throttle_head() -- running: %u, limit: %u\n",
+          running, running_limit);
 }
 
 }  // namespace theta

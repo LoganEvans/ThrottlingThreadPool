@@ -119,6 +119,7 @@ std::string ExecutorImpl::debug_string() const {
   auto [active_num, active_limit] = active_num_limit();
   s += "active=" + std::to_string(active_num);
   s += ", limit=" + std::to_string(active_limit);
+  s += ", running_limit=" + std::to_string(throttle_list_.running_limit());
   s += ", " + stats_.debug_string();
   s += "}";
   return s;

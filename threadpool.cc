@@ -12,7 +12,7 @@ ThrottlingThreadpool::ConfigureOpts
 ThrottlingThreadpool::ConfigureOpts::defaultOpts() {
   return ConfigureOpts{}
       .set_nice_cores(std::thread::hardware_concurrency() / 8)
-      .set_thread_limit(10)//8 * std::thread::hardware_concurrency())
+      .set_thread_limit(8 * std::thread::hardware_concurrency())
       .set_throttle_interval(100ms);
 }
 

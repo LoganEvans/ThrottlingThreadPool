@@ -239,6 +239,8 @@ class ThrottleList {
 
   void append(Task* task);
   void remove(Task* task);
+  uint32_t running_limit(
+      std::memory_order mem_order = std::memory_order::relaxed) const;
   void set_running_limit(size_t running_limit);
 
   uint32_t total(
@@ -296,6 +298,8 @@ class ThrottleList {
         : line_(running | (running_limit << kRunningLimitOffset) |
                 (total << kTotalOffset)) {}
 
+    Count(uint64_t line) : line_(line) {}
+
     Count() : Count(/*running=*/0, /*running_limit=*/1, /*total=*/0) {}
 
     Count(const Count& other,
@@ -307,17 +311,33 @@ class ThrottleList {
       return line_.load(mem_order);
     }
 
-    uint32_t running() const {
-      return line() & kFieldMask;
+    uint32_t running(
+        std::memory_order mem_order = std::memory_order::relaxed) const {
+      return line(mem_order) & kFieldMask;
     }
     void set_running(uint64_t val,
                      std::memory_order mem_order = std::memory_order::relaxed) {
       line_.store((line() & ~kRunningMask) | (val << kRunningOffset),
                   mem_order);
     }
+    void running_delta(int delta) {
+      // TODO(lpe): This could use a fetch_add and some bit manipulation.
+      uint64_t expected_line{line(std::memory_order::relaxed)};
+      uint64_t desired_line;
+      do {
+        Count count{/*line=*/expected_line};
+        int running =
+            delta + static_cast<int>(count.running(std::memory_order::relaxed));
+        count.set_running(running, std::memory_order::relaxed);
+        desired_line = count.line(std::memory_order::relaxed);
+      } while (!line_.compare_exchange_weak(expected_line, desired_line,
+                                            std::memory_order::release,
+                                            std::memory_order::relaxed));
+    }
 
-    uint32_t running_limit() const {
-      return (line() >> kRunningLimitOffset) & kFieldMask;
+    uint32_t running_limit(
+        std::memory_order mem_order = std::memory_order::relaxed) const {
+      return (line(mem_order) >> kRunningLimitOffset) & kFieldMask;
     }
     void set_running_limit(uint64_t val, std::memory_order mem_order =
                                              std::memory_order::relaxed) {
@@ -325,7 +345,10 @@ class ThrottleList {
                   mem_order);
     }
 
-    uint32_t total() const { return (line() >> kTotalOffset) & kFieldMask; }
+    uint32_t total(
+        std::memory_order mem_order = std::memory_order::relaxed) const {
+      return (line(mem_order) >> kTotalOffset) & kFieldMask;
+    }
     void set_total(uint64_t val,
                    std::memory_order mem_order = std::memory_order::relaxed) {
       line_.store((line() & ~kTotalMask) | (val << kTotalOffset), mem_order);
