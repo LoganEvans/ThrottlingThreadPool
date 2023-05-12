@@ -367,8 +367,6 @@ class ThrottleList {
 
   void flush_modifications(bool wait_for_mtx = false);
   void adjust_throttle_head(std::unique_lock<std::mutex>&);
-  bool verify_throttle() const;
-  std::string throttle_list_to_string() const;
 };
 
 }  // namespace theta

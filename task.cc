@@ -31,8 +31,7 @@ Task::Task(Opts opts)
       worker_(nullptr),
       throttle_list_(nullptr),
       prev_(nullptr),
-      next_(nullptr) {
-}
+      next_(nullptr) {}
 
 Task::State Task::state(std::memory_order mem_order) const {
   return state_.load(mem_order);
@@ -189,7 +188,6 @@ void ThrottleList::flush_modifications(bool wait_for_mtx) {
 
   uint32_t running_limit = count_.running_limit(std::memory_order::relaxed);
   while (true) {
-    CHECK(verify_throttle()) << throttle_list_to_string();
     Modification mod = modification_queue_.pop_front();
     if (!mod) {
       break;
@@ -219,10 +217,8 @@ void ThrottleList::flush_modifications(bool wait_for_mtx) {
 
         DCHECK(task->next_);
         DCHECK(task->prev_);
-        CHECK(verify_throttle()) << throttle_list_to_string();
         break;
       default:  // Modification::Op::kRemove:
-        auto before = throttle_list_to_string();
         total = count_.total_delta(-1);
 
         task->next_->prev_ = task->prev_;
@@ -245,12 +241,6 @@ void ThrottleList::flush_modifications(bool wait_for_mtx) {
         task->set_state(Task::State::kFinished);
 
         delete task;
-
-        CHECK(verify_throttle())
-            << before << "\n\n"
-            << "removed: " << std::to_string(reinterpret_cast<size_t>(task))
-            << "\n\n"
-            << throttle_list_to_string();
         break;
     };
   }
@@ -282,70 +272,6 @@ void ThrottleList::adjust_throttle_head(std::unique_lock<std::mutex>&) {
     throttle_head_->set_state(Task::State::kThrottled);
     running--;
   }
-}
-
-bool ThrottleList::verify_throttle() const {
-  if (head_ == throttle_head_) {
-    return false;
-  }
-
-  if (head_->state() != Task::State::kCreated) {
-    return false;
-  }
-
-  if (tail_->state() != Task::State::kCreated) {
-    return false;
-  }
-
-  Task* curs = head_->next_;
-  bool is_throttled_half = false;
-  while (curs != tail_) {
-    if (curs == throttle_head_) {
-      is_throttled_half = true;
-    }
-
-    if (is_throttled_half && curs->state() != Task::State::kThrottled) {
-      fprintf(stderr, "is_throttled_half... state: %d\n", curs->state());
-      return false;
-    } else if (!is_throttled_half && curs->state() != Task::State::kRunning) {
-      fprintf(stderr, "!is_throttled_half... state: %d\n", curs->state());
-      return false;
-    }
-
-    curs = curs->next_;
-  }
-
-  return true;
-}
-
-std::string ThrottleList::throttle_list_to_string() const {
-  std::string s{"\n"};
-  s += std::to_string(reinterpret_cast<size_t>(head_));
-  s += ", state: " + std::to_string(int(head_->state()));
-  s += " (head_)\n";
-
-  Task* curs = head_->next_;
-
-  while (curs != tail_) {
-    s += std::to_string(reinterpret_cast<size_t>(curs));
-    s += ", state: " + std::to_string(int(curs->state()));
-
-    if (curs == throttle_head_) {
-      s += " (throttle_head_)";
-    }
-    s += "\n";
-    curs = curs->next_;
-  }
-
-  s += std::to_string(reinterpret_cast<size_t>(tail_));
-  s += ", state: " + std::to_string(int(tail_->state()));
-  s += " (tail_)";
-
-  if (tail_ == throttle_head_) {
-    s += " (throttle_head_)";
-  }
-  s += "\n";
-  return s;
 }
 
 }  // namespace theta
