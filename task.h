@@ -147,7 +147,9 @@ class Task {
   // TODO(lpe): Make opts_, begin_ru_, and begin_tv_ const.
   const Opts opts_;
   rusage begin_ru_;
+  rusage end_ru_;
   timeval begin_tv_;
+  timeval end_tv_;
 
   std::atomic<State> state_{State::kCreated};
   std::atomic<Worker*> worker_{nullptr};
@@ -156,8 +158,6 @@ class Task {
   // These variables are only read while holding throttle_list_->mtx_.
   Task* prev_{nullptr};
   Task* next_{nullptr};
-
-  void begin_ru_tv();
 };
 
 template <typename T>
@@ -367,6 +367,8 @@ class ThrottleList {
 
   void flush_modifications(bool wait_for_mtx = false);
   void adjust_throttle_head(std::unique_lock<std::mutex>&);
+  bool verify_throttle() const;
+  std::string throttle_list_to_string() const;
 };
 
 }  // namespace theta

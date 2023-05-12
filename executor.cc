@@ -54,11 +54,19 @@ void ExecutorStats::update_ema(struct rusage* begin_ru,
     return sec / kTau;
   };
 
-  {
+  do {
     double interval = tvInterval(begin_tv, end_tv);
-    double alpha = 1.0 - exp(-interval / kTau);
+    if (interval <= 0.0) {
+      break;
+    }
+
     double usage = tvInterval(&begin_ru->ru_utime, &end_ru->ru_utime);
-    double proportion = interval ? usage / interval : 0.0;
+    //if (usage <= 0.0) {
+    //  break;
+    //}
+
+    double alpha = 1.0 - exp(-interval / kTau);
+    double proportion = std::min(1.0, usage == 0.0 ? 1.0 : usage / interval);
 
     double expected = ema_usage_proportion(std::memory_order::relaxed);
     double desired;
@@ -67,7 +75,7 @@ void ExecutorStats::update_ema(struct rusage* begin_ru,
     } while (!ema_usage_proportion_.compare_exchange_weak(
         expected, desired, std::memory_order::release,
         std::memory_order::relaxed));
-  }
+  } while (0);
 
   do {
     timeval last_update_tv = ema_last_update_.load(std::memory_order::acquire);
@@ -75,12 +83,13 @@ void ExecutorStats::update_ema(struct rusage* begin_ru,
     ema_last_update_.compare_exchange_strong(last_update_tv, *end_tv,
                                              std::memory_order::release,
                                              std::memory_order::relaxed);
-    if (last_update_tv.tv_sec == 0) {
+    if (last_update_tv.tv_sec == 0 || interval <= 0.0) {
       break;
     }
 
     double alpha = 1.0 - exp(-interval / kTau);
-    int64_t delta_nivcsw = end_ru->ru_nivcsw - begin_ru->ru_nivcsw;
+    int64_t delta_nivcsw =
+        std::min(0L, end_ru->ru_nivcsw - begin_ru->ru_nivcsw);
 
     double expected = ema_nivcsw_per_task(std::memory_order::relaxed);
     double desired;
@@ -95,8 +104,12 @@ void ExecutorStats::update_ema(struct rusage* begin_ru,
 std::string ExecutorStats::debug_string() const {
   std::string s{"ExecutorStats{"};
   s += "waiting=" + std::to_string(waiting_num());
-  s += ", running=" + std::to_string(running_num());
-  s += ", throttled=" + std::to_string(throttled_num());
+  auto running = running_num();
+  auto throttled = throttled_num();
+  auto total = running + throttled;
+  s += ", running=" + std::to_string(running);
+  s += ", throttled=" + std::to_string(throttled);
+  s += ", total=" + std::to_string(total);
   s += ", finished=" + std::to_string(finished_num());
   s += ", ema_usage_proportion=" + std::to_string(ema_usage_proportion());
   s += ", ema_nivcsw_per_task=" + std::to_string(ema_nivcsw_per_task());

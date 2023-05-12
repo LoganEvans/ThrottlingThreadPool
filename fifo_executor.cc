@@ -25,7 +25,7 @@ std::unique_ptr<Task> FIFOExecutorImpl::pop() {
   static std::atomic<std::chrono::time_point<std::chrono::system_clock>>
       last_print = std::chrono::system_clock::now();
   static std::mutex mtx;
-  static constexpr auto threshold = std::chrono::microseconds{100000};
+  static constexpr auto threshold = std::chrono::microseconds{1000000};
 
   auto now = std::chrono::system_clock::now();
   if (now - last_print.load(std::memory_order::acquire) > threshold) {
