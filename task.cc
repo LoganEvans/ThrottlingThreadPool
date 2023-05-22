@@ -179,73 +179,83 @@ void ThrottleList::flush_modifications(bool wait_for_mtx) {
   // quite a while and should be moved outside of the lock. Similarly,
   // deallocations should be moved outside of the lock.
 
-  std::unique_lock<std::mutex> lock{mtx_, std::defer_lock};
-  if (wait_for_mtx) {
-    lock.lock();
-  } else if (!lock.try_lock()) {
-    return;
-  }
-
-  uint32_t running_limit = count_.running_limit(std::memory_order::relaxed);
-  while (true) {
-    Modification mod = modification_queue_.pop_front();
-    if (!mod) {
-      break;
+  // TODO(lpe): The to_delete vector can possibly do memory allocation. This is
+  // a critical lock, so it is best to avoid the possibility of *any* system
+  // calls.
+  std::vector<Task*> to_delete;
+  {
+    std::unique_lock<std::mutex> lock{mtx_, std::defer_lock};
+    if (wait_for_mtx) {
+      lock.lock();
+    } else if (!lock.try_lock()) {
+      return;
     }
 
-    auto total = count_.total_delta(1);
-
-    Task* task{mod.task()};
-    switch (mod.op()) {
-      case Modification::Op::kAppend:
-        total = count_.total_delta(1);
-
-        task->prev_ = tail_->prev_;
-        task->next_ = tail_;
-        tail_->prev_->next_ = task;
-        tail_->prev_ = task;
-
-        if (throttle_head_ != tail_) {
-          task->set_state(Task::State::kThrottled);
-        } else if (total > running_limit) {
-          throttle_head_ = task;
-          task->set_state(Task::State::kThrottled);
-        } else {
-          task->set_state(Task::State::kRunning);
-          count_.running_delta(1);
-        }
-
-        DCHECK(task->next_);
-        DCHECK(task->prev_);
+    uint32_t running_limit = count_.running_limit(std::memory_order::relaxed);
+    while (true) {
+      Modification mod = modification_queue_.pop_front();
+      if (!mod) {
         break;
-      default:  // Modification::Op::kRemove:
-        total = count_.total_delta(-1);
+      }
 
-        task->next_->prev_ = task->prev_;
-        task->prev_->next_ = task->next_;
+      auto total = count_.total_delta(1);
 
-        auto state = task->state();
-        if (state == Task::State::kRunning) {
-          DCHECK(throttle_head_ != task);
+      Task* task{mod.task()};
+      switch (mod.op()) {
+        case Modification::Op::kAppend:
+          total = count_.total_delta(1);
+
+          task->prev_ = tail_->prev_;
+          task->next_ = tail_;
+          tail_->prev_->next_ = task;
+          tail_->prev_ = task;
 
           if (throttle_head_ != tail_) {
-            throttle_head_->set_state(Task::State::kRunning);
-            throttle_head_ = throttle_head_->next_;
+            task->set_state(Task::State::kThrottled);
+          } else if (total > running_limit) {
+            throttle_head_ = task;
+            task->set_state(Task::State::kThrottled);
           } else {
-            count_.running_delta(-1);
+            task->set_state(Task::State::kRunning);
+            count_.running_delta(1);
           }
-        } else if (task == throttle_head_) {
-          throttle_head_ = task->next_;
-        }
 
-        task->set_state(Task::State::kFinished);
+          DCHECK(task->next_);
+          DCHECK(task->prev_);
+          break;
+        default:  // Modification::Op::kRemove:
+          total = count_.total_delta(-1);
 
-        delete task;
-        break;
-    };
+          task->next_->prev_ = task->prev_;
+          task->prev_->next_ = task->next_;
+
+          auto state = task->state();
+          if (state == Task::State::kRunning) {
+            DCHECK(throttle_head_ != task);
+
+            if (throttle_head_ != tail_) {
+              throttle_head_->set_state(Task::State::kRunning);
+              throttle_head_ = throttle_head_->next_;
+            } else {
+              count_.running_delta(-1);
+            }
+          } else if (task == throttle_head_) {
+            throttle_head_ = task->next_;
+          }
+
+          task->set_state(Task::State::kFinished);
+          to_delete.push_back(task);
+
+          break;
+      };
+    }
+
+    adjust_throttle_head(lock);
   }
 
-  adjust_throttle_head(lock);
+  for (auto* task : to_delete) {
+    delete task;
+  }
 }
 
 void ThrottleList::adjust_throttle_head(std::unique_lock<std::mutex>&) {

@@ -68,6 +68,16 @@ cc_test(
   size = "small",
 )
 
+cc_binary(
+  name = "queue_benchmark",
+  srcs = ["queue_benchmark.cc"],
+  deps = [
+    ":queue",
+    "@benchmark//:benchmark",
+  ],
+  copts = COPTS,
+)
+
 cc_library(
   name = "task",
   srcs = ["task.cc"],

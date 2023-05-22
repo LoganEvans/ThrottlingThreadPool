@@ -26,7 +26,7 @@ namespace theta {
 class ExecutorImpl;
 class Worker;
 
-enum class NicePriority {
+enum class NicePriority : uint32_t {
   kNone = -1,
   kThrottled = 1,
   kNormal = 2,

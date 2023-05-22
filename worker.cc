@@ -29,27 +29,6 @@ void Worker::set_nice_priority(NicePriority priority) {
     return;
   }
 
-  std::lock_guard lock{priority_mutex_};
-
-  auto old_priority = priority_.exchange(priority, std::memory_order::acq_rel);
-  if (old_priority == priority) {
-    return;
-  }
-
-  sched_param param;
-  switch (priority) {
-    case NicePriority::kThrottled:
-      param.sched_priority = -20;
-      break;
-    case NicePriority::kPrioritized:
-      param.sched_priority = 19;
-      break;
-    default:
-      param.sched_priority = 0;
-      break;
-  }
-
-  pthread_setschedparam(get_pthread(), sched_policy, &param);
 }
 
 pthread_t Worker::get_pthread() {
@@ -73,6 +52,33 @@ void Worker::run_loop() {
     task = nullptr;
     executor->refill_queues(&task);
   }
+}
+
+void Worker::maybe_update_priority() {
+  if (!priority_.change_is_postponed()) {
+    return;
+  }
+
+  std::lock_guard lock{priority_mutex_};
+  Priority prio{priority_.line.load(std::memory_order::acquire)};
+  if (prio.actual == prio.postponed) {
+    return;
+  }
+
+  sched_param param;
+  switch (priority) {
+    case NicePriority::kThrottled:
+      param.sched_priority = -20;
+      break;
+    case NicePriority::kPrioritized:
+      param.sched_priority = 19;
+      break;
+    default:
+      param.sched_priority = 0;
+      break;
+  }
+
+  pthread_setschedparam(get_pthread(), sched_policy, &param);
 }
 
 }  // namespace theta
