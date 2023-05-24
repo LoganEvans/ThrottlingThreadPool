@@ -10,13 +10,24 @@
 
 namespace theta {
 
-TEST(Queue, push_back_pop_front) {
-  static constexpr int kSize = 10;
-  Queue<int*> queue{QueueOpts{}};
+template <typename T>
+class QueueTests : public ::testing::Test {
+ public:
+  static T make_uut(QueueOpts opts = QueueOpts{}) {
+    return T{opts};
+  }
+};
 
-  for (int i = 0; i < kSize; i++) {
+using MyTypes = ::testing::Types<MPSCQueue<uint64_t*>, Queue<uint64_t*>>;
+TYPED_TEST_SUITE(QueueTests, MyTypes);
+
+TYPED_TEST(QueueTests, push_back_pop_front) {
+  static constexpr int kSize = 10;
+  auto queue = this->make_uut();
+
+  for (uint64_t i = 0; i < kSize; i++) {
     EXPECT_EQ(queue.size(), i);
-    EXPECT_TRUE(queue.push_back(new int{100 + i}));
+    EXPECT_TRUE(queue.push_back(new uint64_t{100 + i}));
   }
 
   int expected = 100;
@@ -33,32 +44,33 @@ TEST(Queue, push_back_pop_front) {
   EXPECT_EQ(expected, 110);
 }
 
-TEST(Queue, next_pow_2) {
+TYPED_TEST(QueueTests, next_pow_2) {
+  auto queue = this->make_uut();
   int v = 4;
   while (v < (1 << 30)) {
-    EXPECT_EQ(Queue<int>::next_pow_2(v - 1), v);
-    EXPECT_EQ(Queue<int>::next_pow_2(v), v);
-    EXPECT_EQ(Queue<int>::next_pow_2(v + 1), v << 1);
+    EXPECT_EQ(queue.next_pow_2(v - 1), v);
+    EXPECT_EQ(queue.next_pow_2(v), v);
+    EXPECT_EQ(queue.next_pow_2(v + 1), v << 1);
     v <<= 1;
   }
 }
 
-TEST(Queue, push_back_full) {
+TYPED_TEST(QueueTests, push_back_full) {
   static constexpr int kSize = 16;
-  Queue<int*> queue{QueueOpts{}.set_max_size(kSize)};
+  auto queue = this->make_uut(QueueOpts{}.set_max_size(kSize));
 
   for (int j = 0; j < 32; j++) {
     EXPECT_EQ(queue.next_pow_2(16), 16);
     EXPECT_EQ(queue.capacity(), kSize - 1);
 
-    for (int i = 0; i < static_cast<int>(queue.capacity()); i++) {
+    for (uint64_t i = 0; i < queue.capacity(); i++) {
       EXPECT_EQ(queue.size(), i);
-      EXPECT_TRUE(queue.push_back(new int{100 + i}));
+      EXPECT_TRUE(queue.push_back(new uint64_t{100 + i}));
     }
 
     EXPECT_EQ(queue.size(), queue.capacity());
     EXPECT_EQ(queue.size(), kSize - 1);
-    auto* v = new int{1000};
+    auto* v = new uint64_t{1000};
     EXPECT_FALSE(queue.push_back(v));
     delete v;
 
@@ -77,20 +89,20 @@ TEST(Queue, push_back_full) {
     EXPECT_EQ(queue.size(), 0);
 
     // Do everything again, but with a new offset
-    v = new int{1000};
+    v = new uint64_t{1000};
     EXPECT_TRUE(queue.push_back(v));
     delete queue.pop_front();
     EXPECT_EQ(queue.pop_front(), nullptr);
   }
 }
 
-TEST(Queue, multithreaded_stress) {
+TYPED_TEST(QueueTests, multithreaded_stress) {
   static constexpr uint64_t kPushesPerThread = 100000;
   static constexpr int kNumThreads = 4;
   std::array<std::thread, kNumThreads> threads;
   std::array<std::atomic<uint64_t>, kNumThreads> sums;
 
-  Queue<uint64_t*> queue{QueueOpts{}.set_max_size(32)};
+  auto queue = this->make_uut(QueueOpts{}.set_max_size(32));
 
   for (int tx = 0; tx < kNumThreads; tx++) {
     threads[tx] = std::thread(

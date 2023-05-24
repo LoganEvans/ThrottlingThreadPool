@@ -9,7 +9,7 @@
 namespace theta {
 
 static void BM_multi_producer_single_consumer(benchmark::State &state) {
-  Queue<int *> queue{QueueOpts{}};
+  MPSCQueue<int *> queue{QueueOpts{}};
   std::atomic<bool> done{false};
 
   auto work = [&]() {

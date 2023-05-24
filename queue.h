@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
 namespace theta {
@@ -41,20 +42,13 @@ template <typename T>
 auto constexpr can_be_atomic = is_atomic<std::atomic<T>>;
 
 template <typename T>
-static constexpr bool memset0_to_bool() {
-  T t;
-  memset(&t, 0, sizeof(T));
-  return static_cast<bool>(t);
-}
-
-template <typename T>
-concept ZeroableAtomType = requires(T t) {
+concept AtomType = requires(T t) {
+  std::is_trivially_constructible<T>::value;
   can_be_atomic<T>;
-  static_cast<bool>(T{}) == false;
-  memset0_to_bool<T>() == false;
+  sizeof(T) <= 8;
 };
 
-template <ZeroableAtomType T>
+template <AtomType T>
 class Queue {
  public:
   static constexpr size_t next_pow_2(int v) {
@@ -65,12 +59,182 @@ class Queue {
     return 1 << lg_v;
   }
 
-  Queue(QueueOpts opts)
+  Queue(const QueueOpts& opts)
+      : head_tail_(0, 0),
+        buffer_(next_pow_2(opts.max_size())),
+        buffer_size_mask_(next_pow_2(opts.max_size()) - 1),
+        buffer_wrap_delta_(next_pow_2(opts.max_size()) * increment()) {}
+
+  ~Queue() {
+    while (true) {
+      auto v = pop_front();
+      if (!v) {
+        break;
+      }
+    }
+  }
+
+  bool push_back(T val) { return push_back(val, nullptr); }
+
+  bool push_back(T val, size_t* num_items) {
+    __int128 expected_line = get_head_tail(std::memory_order::acquire)
+                                 .line.load(std::memory_order::relaxed);
+    HeadTail want;
+    uint64_t want_tail_tag;
+    do {
+      HeadTail expected{expected_line};
+      want_tail_tag = next_tag(expected.tail_tag);
+      if (want_tail_tag >= expected.head_tag + buffer_wrap_delta_) {
+        return false;
+      }
+      want.head_tag = expected.head_tag;
+      want.tail_tag = want_tail_tag;
+    } while (!head_tail_.line.compare_exchange_weak(
+        expected_line, want.line, std::memory_order::release,
+        std::memory_order::relaxed));
+
+    Data new_data{/*value_=*/val, /*tag_=*/want_tail_tag};
+    int idx = tag2index(want_tail_tag);
+    uint64_t paired_tag = prev_paired_tag(want_tail_tag);
+    __int128 expected_data_line = 0;
+    do {
+      Data expected_data{/*line_=*/expected_data_line};
+      expected_data.tag = paired_tag;
+      expected_data_line = expected_data.line.load(std::memory_order::relaxed);
+    } while (!buffer_[idx].line.compare_exchange_weak(
+        expected_data_line, new_data.line, std::memory_order::release,
+        std::memory_order::relaxed));
+
+    return true;
+  }
+
+  T pop_front() {
+    __int128 expected_line = get_head_tail(std::memory_order::acquire)
+                                 .line.load(std::memory_order::relaxed);
+    HeadTail want;
+    uint64_t want_head_tag;
+    do {
+      HeadTail expected{expected_line};
+      if (expected.head_tag == expected.tail_tag) {
+        return T{};
+      }
+      want_head_tag = next_tag(expected.tail_tag);
+      want.head_tag = want_head_tag;
+      want.tail_tag = expected.tail_tag;
+    } while (!head_tail_.line.compare_exchange_weak(
+        expected_line, want.line, std::memory_order::release,
+        std::memory_order::relaxed));
+
+    int idx = tag2index(want_head_tag);
+    __int128 expected_data_line = 0;
+    const Data new_data{/*value_=*/T{}, /*tag_=*/want_head_tag};
+    do {
+      Data expected_data{/*line_=*/expected_data_line};
+      expected_data.tag = want_head_tag;
+      expected_data_line = expected_data.line.load(std::memory_order::relaxed);
+    } while (!buffer_[idx].line.compare_exchange_weak(
+        expected_data_line, new_data.line, std::memory_order::release,
+        std::memory_order::relaxed));
+
+    return Data{/*line_=*/expected_data_line}.value;
+  }
+
+  size_t size() const {
+    auto ht = get_head_tail();
+    return (ht.head_tag - ht.tail_tag) / increment();
+  }
+
+  size_t capacity() const { return buffer_size_mask_ + 1; }
+
+ private:
+  union alignas(hardware_destructive_interference_size) HeadTail {
+    struct {
+      uint64_t head_tag{0};
+      uint64_t tail_tag{0};
+    };
+    std::atomic<__int128> line;
+
+    HeadTail(uint64_t head, uint64_t tail) : head_tag(head), tail_tag(tail) {}
+    HeadTail(__int128 from_line) : line(from_line) {}
+    HeadTail() : HeadTail(/*line_=*/0) {}
+  } head_tail_;
+
+  HeadTail get_head_tail(
+      std::memory_order mem_order = std::memory_order::acquire) const {
+    return HeadTail{head_tail_.line.load(mem_order)};
+  }
+
+  union Data {
+    struct {
+      T value;
+      uint64_t tag;
+    };
+    std::atomic<__int128> line;
+
+    Data(T value_, uint64_t tag_) : value(value_), tag(tag_) {}
+    Data(__int128 line_) : line(line_) {}
+    Data() : Data(/*line_=*/0) {}
+  };
+  static_assert(sizeof(Data) == sizeof(Data::line), "");
+
+  std::vector<Data> buffer_;
+
+  const uint64_t buffer_size_mask_;
+  const uint64_t buffer_wrap_delta_;
+
+  int tag2index(uint64_t tag) const {
+    return tag & buffer_size_mask_;
+  }
+
+  constexpr uint64_t increment() const {
+    return 1 + hardware_destructive_interference_size / sizeof(Data);
+  }
+
+  uint64_t next_tag(uint64_t tag) const {
+    return tag + increment();
+  }
+
+  uint64_t prev_paired_tag(uint64_t tag) const {
+    return tag - buffer_wrap_delta_;
+  }
+};
+
+template <typename T>
+static constexpr bool memset0_to_bool() {
+  T t;
+  memset(&t, 0, sizeof(T));
+  return static_cast<bool>(t);
+}
+
+template <typename T>
+concept ZeroableAtomType = requires(T t) {
+  std::is_trivially_constructible<T>::value;
+  can_be_atomic<T>;
+  static_cast<bool>(T{}) == false;
+  memset0_to_bool<T>() == false;
+};
+
+// Multiple-producer, single-consumer.
+// If more than one consumer exists at once, no items will be lost, but it is
+// possible for events to appear out of order. This requires that no producer
+// adds a "zero" item.
+template <ZeroableAtomType T>
+class MPSCQueue {
+ public:
+  static constexpr size_t next_pow_2(int v) {
+    if ((v & (v - 1)) == 0) {
+      return v;
+    }
+    int lg_v = 8 * sizeof(v) - __builtin_clz(v);
+    return 1 << lg_v;
+  }
+
+  MPSCQueue(QueueOpts opts)
       : ht_(/*head=*/0, /*tail=*/0), buf_(next_pow_2(opts.max_size())) {
     CHECK(capacity());
   }
 
-  ~Queue() {
+  ~MPSCQueue() {
     while (true) {
       auto v = pop_front();
       if (!v) {

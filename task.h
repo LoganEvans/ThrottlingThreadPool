@@ -228,7 +228,7 @@ class TaskQueue {
  private:
   SemaphoreType sem_;
 
-  Queue<Task*> queue_;
+  MPSCQueue<Task*> queue_;
   std::atomic<bool> shutdown_{false};
 };
 
@@ -362,7 +362,7 @@ class ThrottleList {
     std::atomic<uint64_t> line_{0};
   } count_;
 
-  Queue<Modification> modification_queue_;
+  MPSCQueue<Modification> modification_queue_;
   std::mutex mtx_;
 
   void flush_modifications(bool wait_for_mtx = false);
