@@ -48,22 +48,130 @@ concept AtomType = requires(T t) {
   sizeof(T) <= 8;
 };
 
-template <AtomType T>
-class Queue {
- public:
-  static constexpr size_t next_pow_2(int v) {
-    if ((v & (v - 1)) == 0) {
-      return v;
-    }
-    int lg_v = 8 * sizeof(v) - __builtin_clz(v);
-    return 1 << lg_v;
-  }
+template <typename T>
+class alignas(hardware_destructive_interference_size) ExclusiveCacheLine {
+  static_assert(sizeof(T) <= hardware_destructive_interference_size, "");
 
-  Queue(const QueueOpts& opts)
-      : head_tail_(0, 0),
-        buffer_(next_pow_2(opts.max_size())),
-        buffer_size_mask_(next_pow_2(opts.max_size()) - 1),
-        buffer_wrap_delta_(next_pow_2(opts.max_size()) * increment()) {}
+ public:
+  template <typename... Args>
+  ExclusiveCacheLine(Args... args) : t_(std::forward<Args>(args)...) {}
+
+  T& get() { return t_; }
+  const T& get() const { return t_; }
+
+ private:
+  T t_;
+};
+
+template <AtomType T, size_t kBufferSize = 128>
+class Queue {
+  struct Tag {
+    static_assert((kBufferSize & (kBufferSize - 1)) == 0, "");
+
+    static constexpr uint64_t kIncrement =
+        1 + hardware_destructive_interference_size / 16;
+    static constexpr uint64_t kBufferWrapDelta = kBufferSize * kIncrement;
+    static constexpr uint64_t kBufferSizeMask = kBufferSize - 1;
+
+    uint64_t value;
+
+    Tag() : value(0) {}
+
+    Tag& operator++() {
+      value += kIncrement;
+      return *this;
+    }
+
+    Tag& operator++(int) {
+      Tag orig{*this};
+      value += kIncrement;
+      return orig;
+    }
+
+    auto operator<=>(const Tag&) const = default;
+
+    Tag prev_paired_tag() const {
+      return Tag{.value = value - kBufferWrapDelta};
+    }
+
+    bool is_paired(Tag observed_tag) const {
+      if (is_consumer()) {
+        return (value ^ observed_tag.value) == (1ULL << 63);
+      } else {
+        return observed_tag.value == ((value - kBufferWrapDelta) | (1ULL << 63));
+      }
+    }
+
+    bool is_producer() const {
+      return value >> 63 == 0;
+    }
+
+    void mark_as_producer() {
+      value &= ~(1ULL << 63);
+    }
+
+    bool is_consumer() const {
+      return value >> 63 == 1;
+    }
+
+    void mark_as_consumer() {
+      value |= (1ULL << 63);
+    }
+
+    Tag next_tag() const {
+      return value + kIncrement;
+    }
+
+    int to_index() const {
+      return value & kBufferSizeMask;
+    }
+  };
+  static_assert(sizeof(Tag) == sizeof(uint64_t), "");
+
+  union HeadTail {
+    struct {
+      Tag head_tag;
+      Tag tail_tag;
+    };
+    std::atomic<__int128> line;
+
+    HeadTail(Tag head, Tag tail) : head_tag(head), tail_tag(tail) {}
+    HeadTail(__int128 from_line) : line(from_line) {}
+    HeadTail() : HeadTail(/*line=*/0) {}
+  };
+  static_assert(sizeof(HeadTail) == sizeof(HeadTail::line), "");
+
+  union Data {
+    struct {
+      T value;
+      Tag tag;
+    };
+    struct {
+      std::atomic<T> value_atomic;
+      std::atomic<Tag> tag_atomic;
+    };
+    std::atomic<__int128> line;
+
+    Data(T value_, Tag tag_) : value(value_), tag(tag_) {}
+    Data(__int128 line) : line(line) {}
+    Data() : Data(/*line=*/0) {}
+  };
+  static_assert(sizeof(Data) == sizeof(Data::line), "");
+  static_assert(sizeof(Data) == 16, "");
+
+ public:
+  Queue() : head_tail_(Tag{}, Tag{}), buffer_(kBufferSize) {
+    fprintf(stderr, "buffer_wrap_delta_: %lu\n", Tag::kBufferWrapDelta);
+    Tag tag;
+    tag.mark_as_consumer();
+    for (size_t i = 0; i < buffer_.size(); i++) {
+      fprintf(stderr, "i: %zu, tag: %lx\n", i, tag.value);
+      buffer_[tag.to_index()].tag = tag;
+      ++tag;
+    }
+    std::atomic_thread_fence(std::memory_order::release);
+  }
+  Queue(const QueueOpts&) : Queue() {}
 
   ~Queue() {
     while (true) {
@@ -79,123 +187,104 @@ class Queue {
   bool push_back(T val, size_t* num_items) {
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
+    fprintf(stderr, "> push_back()\n");
     HeadTail want;
-    uint64_t want_tail_tag;
+    Tag claimed_tail_tag;
     do {
       HeadTail expected{expected_line};
-      want_tail_tag = next_tag(expected.tail_tag);
-      if (want_tail_tag >= expected.head_tag + buffer_wrap_delta_) {
+      claimed_tail_tag = expected.tail_tag;
+      if (claimed_tail_tag.value >=
+          expected.head_tag.value + Tag::kBufferWrapDelta) {
+        fprintf(stderr, "< push_back() #=> false\n");
         return false;
       }
       want.head_tag = expected.head_tag;
-      want.tail_tag = want_tail_tag;
-    } while (!head_tail_.line.compare_exchange_weak(
+      ++want.tail_tag;
+    } while (!head_tail_.get().line.compare_exchange_weak(
         expected_line, want.line, std::memory_order::release,
         std::memory_order::relaxed));
 
-    Data new_data{/*value_=*/val, /*tag_=*/want_tail_tag};
-    int idx = tag2index(want_tail_tag);
-    uint64_t paired_tag = prev_paired_tag(want_tail_tag);
-    __int128 expected_data_line = 0;
+    Data new_data{/*value_=*/val, /*tag_=*/claimed_tail_tag};
+    int idx = claimed_tail_tag.to_index();
+    fprintf(stderr,
+            "push_back head: %lu, tail: %lu, claimed_tail_tag: %lu, idx: "
+            "%d/%zu, new_data.tag: %lu\n",
+            want.head_tag, want.tail_tag, claimed_tail_tag, idx,
+            buffer_.size(), new_data.tag);
+    //__int128 expected_data_line = 0;
+    __int128 expected_data_line =
+        buffer_[idx].line.load(std::memory_order::acquire);
+    fprintf(stderr, "actual tag: %lu\n", Data{expected_data_line}.tag);
     do {
-      Data expected_data{/*line_=*/expected_data_line};
-      expected_data.tag = paired_tag;
+      Data expected_data{/*line=*/expected_data_line};
+      expected_data.tag = claimed_tail_tag;
       expected_data_line = expected_data.line.load(std::memory_order::relaxed);
     } while (!buffer_[idx].line.compare_exchange_weak(
         expected_data_line, new_data.line, std::memory_order::release,
         std::memory_order::relaxed));
 
+    fprintf(stderr, "< push_back() #=> true\n");
     return true;
   }
 
   T pop_front() {
+    fprintf(stderr, "> pop_front()\n");
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
     HeadTail want;
-    uint64_t want_head_tag;
+    Tag claimed_head_tag;
     do {
       HeadTail expected{expected_line};
       if (expected.head_tag == expected.tail_tag) {
+        fprintf(stderr, "< pop_front() #=> empty\n");
         return T{};
       }
-      want_head_tag = next_tag(expected.tail_tag);
-      want.head_tag = want_head_tag;
+      claimed_head_tag = expected.head_tag;
+      ++want.head_tag;
       want.tail_tag = expected.tail_tag;
-    } while (!head_tail_.line.compare_exchange_weak(
+    } while (!head_tail_.get().line.compare_exchange_weak(
         expected_line, want.line, std::memory_order::release,
         std::memory_order::relaxed));
 
-    int idx = tag2index(want_head_tag);
-    __int128 expected_data_line = 0;
-    const Data new_data{/*value_=*/T{}, /*tag_=*/want_head_tag};
-    do {
-      Data expected_data{/*line_=*/expected_data_line};
-      expected_data.tag = want_head_tag;
-      expected_data_line = expected_data.line.load(std::memory_order::relaxed);
-    } while (!buffer_[idx].line.compare_exchange_weak(
-        expected_data_line, new_data.line, std::memory_order::release,
-        std::memory_order::relaxed));
+    claimed_head_tag.mark_as_consumer();
 
-    return Data{/*line_=*/expected_data_line}.value;
+    int idx = claimed_head_tag.to_index();
+    fprintf(stderr,
+            "pop_front: claimed_head_tag: %lu, want.head_tag: %lu, "
+            "want.tail_tag: %lu, idx: %d\n",
+            claimed_head_tag.value, want.head_tag.value, want.tail_tag.value,
+            idx);
+    while (true) {
+      __int128 expected_data_line =
+          buffer_[idx].line.load(std::memory_order::acquire);
+      Data expected_data{/*line=*/expected_data_line};
+      if (expected_data.tag == claimed_head_tag) {
+        buffer_[idx].tag_atomic.store(claimed_head_tag,
+                                      std::memory_order::release);
+        return expected_data.value;
+      }
+      CHECK(claimed_head_tag >= expected_data.tag)
+          << "claimed: " << claimed_head_tag.value << ", expected_data.tag: "
+          << expected_data.tag.value;
+      //fprintf(stderr, "expected: %lu, claimed: %lu\n", expected_data.tag,
+      //        claimed_head_tag);
+    }
   }
 
   size_t size() const {
     auto ht = get_head_tail();
-    return (ht.head_tag - ht.tail_tag) / increment();
+    return (ht.tail_tag.value - ht.head_tag.value) / Tag::kIncrement;
   }
 
-  size_t capacity() const { return buffer_size_mask_ + 1; }
+  static constexpr size_t capacity() { return kBufferSize; }
 
  private:
-  union alignas(hardware_destructive_interference_size) HeadTail {
-    struct {
-      uint64_t head_tag{0};
-      uint64_t tail_tag{0};
-    };
-    std::atomic<__int128> line;
-
-    HeadTail(uint64_t head, uint64_t tail) : head_tag(head), tail_tag(tail) {}
-    HeadTail(__int128 from_line) : line(from_line) {}
-    HeadTail() : HeadTail(/*line_=*/0) {}
-  } head_tail_;
+  ExclusiveCacheLine<HeadTail> head_tail_;
+  std::vector<Data> buffer_;
 
   HeadTail get_head_tail(
       std::memory_order mem_order = std::memory_order::acquire) const {
-    return HeadTail{head_tail_.line.load(mem_order)};
-  }
-
-  union Data {
-    struct {
-      T value;
-      uint64_t tag;
-    };
-    std::atomic<__int128> line;
-
-    Data(T value_, uint64_t tag_) : value(value_), tag(tag_) {}
-    Data(__int128 line_) : line(line_) {}
-    Data() : Data(/*line_=*/0) {}
-  };
-  static_assert(sizeof(Data) == sizeof(Data::line), "");
-
-  std::vector<Data> buffer_;
-
-  const uint64_t buffer_size_mask_;
-  const uint64_t buffer_wrap_delta_;
-
-  int tag2index(uint64_t tag) const {
-    return tag & buffer_size_mask_;
-  }
-
-  constexpr uint64_t increment() const {
-    return 1 + hardware_destructive_interference_size / sizeof(Data);
-  }
-
-  uint64_t next_tag(uint64_t tag) const {
-    return tag + increment();
-  }
-
-  uint64_t prev_paired_tag(uint64_t tag) const {
-    return tag - buffer_wrap_delta_;
+    return HeadTail{head_tail_.get().line.load(mem_order)};
   }
 };
 
@@ -355,8 +444,8 @@ class MPSCQueue {
     };
     std::atomic<uint64_t> line;
 
-    HeadTail(uint64_t line_) : line(line_) {}
-    HeadTail(uint32_t head_, uint32_t tail_) : head(head_), tail(tail_) {}
+    HeadTail(uint64_t line) : line(line) {}
+    HeadTail(uint32_t head, uint32_t tail) : head(head), tail(tail) {}
   } ht_;
 
   std::vector<std::atomic<T>> buf_;
