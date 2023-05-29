@@ -8,8 +8,9 @@
 
 namespace theta {
 
+template <typename QType>
 static void BM_multi_producer_single_consumer(benchmark::State &state) {
-  MPSCQueue<int *> queue{QueueOpts{}};
+  QType queue{QueueOpts{}};
   std::atomic<bool> done{false};
 
   auto work = [&]() {
@@ -35,7 +36,14 @@ static void BM_multi_producer_single_consumer(benchmark::State &state) {
   }
 }
 
-BENCHMARK(BM_multi_producer_single_consumer)
+BENCHMARK_TEMPLATE(BM_multi_producer_single_consumer, MPSCQueue<int*>)
+    ->Args({1})
+    ->Args({2})
+    ->Args({4})
+    ->Args({8})
+    ->Args({12})
+    ->Args({24});
+BENCHMARK_TEMPLATE(BM_multi_producer_single_consumer, Queue<int*>)
     ->Args({1})
     ->Args({2})
     ->Args({4})

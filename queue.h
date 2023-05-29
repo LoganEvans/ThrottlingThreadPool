@@ -17,7 +17,7 @@ using std::hardware_constructive_interference_size;
 using std::hardware_destructive_interference_size;
 #else
 constexpr std::size_t hardware_constructive_interference_size = 64;
-constexpr std::size_t hardware_destructive_interference_size = 64;
+constexpr std::size_t hardware_destructive_interference_size = 128;
 #endif
 
 class QueueOpts {
@@ -91,11 +91,6 @@ class Queue {
 
     auto operator<=>(const Tag&) const = default;
 
-    std::string DebugString() const {
-      return "Tag<" + std::string(is_producer() ? "P" : "C") + ">{" +
-             std::to_string(value & ((1ULL << 63) - 1)) + "}";
-    }
-
     Tag prev_paired_tag() const {
       return Tag{.value = value - kBufferWrapDelta};
     }
@@ -144,11 +139,6 @@ class Queue {
     HeadTail(Tag head, Tag tail) : head_tag(head), tail_tag(tail) {}
     HeadTail(__int128 from_line) : line(from_line) {}
     HeadTail() : HeadTail(/*line=*/0) {}
-
-    std::string DebugString() const {
-      return "HeadTail{head=" + head_tag.DebugString() + ", tail=" +
-             tail_tag.DebugString() + "}";
-    }
   };
   static_assert(sizeof(HeadTail) == sizeof(HeadTail::line), "");
 
@@ -166,11 +156,6 @@ class Queue {
     Data(T value_, Tag tag_) : value(value_), tag(tag_) {}
     Data(__int128 line) : line(line) {}
     Data() : Data(/*line=*/0) {}
-
-    std::string DebugString() const {
-      return "Data{value=" + std::string(bool(value) ? "####" : "null") + ", " +
-             tag.DebugString() + "}";
-    }
   };
   static_assert(sizeof(Data) == sizeof(Data::line), "");
   static_assert(sizeof(Data) == 16, "");
@@ -219,9 +204,7 @@ class Queue {
 
     Data new_data{/*value_=*/val, /*tag_=*/claimed_tail_tag};
     int idx = claimed_tail_tag.to_index();
-    //__int128 expected_data_line = 0;
-    __int128 expected_data_line =
-        buffer_[idx].line.load(std::memory_order::acquire);
+    __int128 expected_data_line = 0;
     do {
       Data expected_data{/*line=*/expected_data_line};
       expected_data.tag = claimed_tail_tag;
@@ -264,9 +247,6 @@ class Queue {
                                       std::memory_order::release);
         return observed_data.value;
       }
-      CHECK(claimed_head_tag >= observed_data.tag)
-          << "claimed: " << claimed_head_tag.value << ", observed_data.tag: "
-          << observed_data.tag.value;
     }
   }
 
