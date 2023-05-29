@@ -75,7 +75,8 @@ class Queue {
 
     uint64_t value;
 
-    Tag() : value(0) {}
+    Tag(uint64_t value) : value(value) {}
+    Tag() : Tag(0) {}
 
     Tag& operator++() {
       value += kIncrement;
@@ -89,6 +90,11 @@ class Queue {
     }
 
     auto operator<=>(const Tag&) const = default;
+
+    std::string DebugString() const {
+      return "Tag<" + std::string(is_producer() ? "P" : "C") + ">{" +
+             std::to_string(value & ((1ULL << 63) - 1)) + "}";
+    }
 
     Tag prev_paired_tag() const {
       return Tag{.value = value - kBufferWrapDelta};
@@ -118,8 +124,8 @@ class Queue {
       value |= (1ULL << 63);
     }
 
-    Tag next_tag() const {
-      return value + kIncrement;
+    Tag next_wrapped_tag() const {
+      return Tag(value + kBufferWrapDelta);
     }
 
     int to_index() const {
@@ -138,6 +144,11 @@ class Queue {
     HeadTail(Tag head, Tag tail) : head_tag(head), tail_tag(tail) {}
     HeadTail(__int128 from_line) : line(from_line) {}
     HeadTail() : HeadTail(/*line=*/0) {}
+
+    std::string DebugString() const {
+      return "HeadTail{head=" + head_tag.DebugString() + ", tail=" +
+             tail_tag.DebugString() + "}";
+    }
   };
   static_assert(sizeof(HeadTail) == sizeof(HeadTail::line), "");
 
@@ -155,17 +166,20 @@ class Queue {
     Data(T value_, Tag tag_) : value(value_), tag(tag_) {}
     Data(__int128 line) : line(line) {}
     Data() : Data(/*line=*/0) {}
+
+    std::string DebugString() const {
+      return "Data{value=" + std::string(bool(value) ? "####" : "null") + ", " +
+             tag.DebugString() + "}";
+    }
   };
   static_assert(sizeof(Data) == sizeof(Data::line), "");
   static_assert(sizeof(Data) == 16, "");
 
  public:
   Queue() : head_tail_(Tag{}, Tag{}), buffer_(kBufferSize) {
-    fprintf(stderr, "buffer_wrap_delta_: %lu\n", Tag::kBufferWrapDelta);
     Tag tag;
     tag.mark_as_consumer();
     for (size_t i = 0; i < buffer_.size(); i++) {
-      fprintf(stderr, "i: %zu, tag: %lx\n", i, tag.value);
       buffer_[tag.to_index()].tag = tag;
       ++tag;
     }
@@ -187,7 +201,6 @@ class Queue {
   bool push_back(T val, size_t* num_items) {
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
-    fprintf(stderr, "> push_back()\n");
     HeadTail want;
     Tag claimed_tail_tag;
     do {
@@ -195,10 +208,10 @@ class Queue {
       claimed_tail_tag = expected.tail_tag;
       if (claimed_tail_tag.value >=
           expected.head_tag.value + Tag::kBufferWrapDelta) {
-        fprintf(stderr, "< push_back() #=> false\n");
         return false;
       }
       want.head_tag = expected.head_tag;
+      want.tail_tag = expected.tail_tag;
       ++want.tail_tag;
     } while (!head_tail_.get().line.compare_exchange_weak(
         expected_line, want.line, std::memory_order::release,
@@ -206,29 +219,22 @@ class Queue {
 
     Data new_data{/*value_=*/val, /*tag_=*/claimed_tail_tag};
     int idx = claimed_tail_tag.to_index();
-    fprintf(stderr,
-            "push_back head: %lu, tail: %lu, claimed_tail_tag: %lu, idx: "
-            "%d/%zu, new_data.tag: %lu\n",
-            want.head_tag, want.tail_tag, claimed_tail_tag, idx,
-            buffer_.size(), new_data.tag);
     //__int128 expected_data_line = 0;
     __int128 expected_data_line =
         buffer_[idx].line.load(std::memory_order::acquire);
-    fprintf(stderr, "actual tag: %lu\n", Data{expected_data_line}.tag);
     do {
       Data expected_data{/*line=*/expected_data_line};
       expected_data.tag = claimed_tail_tag;
+      expected_data.tag.mark_as_consumer();
       expected_data_line = expected_data.line.load(std::memory_order::relaxed);
     } while (!buffer_[idx].line.compare_exchange_weak(
         expected_data_line, new_data.line, std::memory_order::release,
         std::memory_order::relaxed));
 
-    fprintf(stderr, "< push_back() #=> true\n");
     return true;
   }
 
   T pop_front() {
-    fprintf(stderr, "> pop_front()\n");
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
     HeadTail want;
@@ -236,12 +242,12 @@ class Queue {
     do {
       HeadTail expected{expected_line};
       if (expected.head_tag == expected.tail_tag) {
-        fprintf(stderr, "< pop_front() #=> empty\n");
         return T{};
       }
+      want.head_tag = expected.head_tag;
+      want.tail_tag = expected.tail_tag;
       claimed_head_tag = expected.head_tag;
       ++want.head_tag;
-      want.tail_tag = expected.tail_tag;
     } while (!head_tail_.get().line.compare_exchange_weak(
         expected_line, want.line, std::memory_order::release,
         std::memory_order::relaxed));
@@ -249,25 +255,18 @@ class Queue {
     claimed_head_tag.mark_as_consumer();
 
     int idx = claimed_head_tag.to_index();
-    fprintf(stderr,
-            "pop_front: claimed_head_tag: %lu, want.head_tag: %lu, "
-            "want.tail_tag: %lu, idx: %d\n",
-            claimed_head_tag.value, want.head_tag.value, want.tail_tag.value,
-            idx);
     while (true) {
-      __int128 expected_data_line =
+      __int128 observed_data_line =
           buffer_[idx].line.load(std::memory_order::acquire);
-      Data expected_data{/*line=*/expected_data_line};
-      if (expected_data.tag == claimed_head_tag) {
-        buffer_[idx].tag_atomic.store(claimed_head_tag,
+      Data observed_data{/*line=*/observed_data_line};
+      if (claimed_head_tag.is_paired(observed_data.tag)) {
+        buffer_[idx].tag_atomic.store(claimed_head_tag.next_wrapped_tag(),
                                       std::memory_order::release);
-        return expected_data.value;
+        return observed_data.value;
       }
-      CHECK(claimed_head_tag >= expected_data.tag)
-          << "claimed: " << claimed_head_tag.value << ", expected_data.tag: "
-          << expected_data.tag.value;
-      //fprintf(stderr, "expected: %lu, claimed: %lu\n", expected_data.tag,
-      //        claimed_head_tag);
+      CHECK(claimed_head_tag >= observed_data.tag)
+          << "claimed: " << claimed_head_tag.value << ", observed_data.tag: "
+          << observed_data.tag.value;
     }
   }
 
