@@ -48,84 +48,73 @@ concept AtomType = requires(T t) {
   sizeof(T) <= 8;
 };
 
-template <typename T>
-class alignas(hardware_destructive_interference_size) ExclusiveCacheLine {
-  static_assert(sizeof(T) <= hardware_destructive_interference_size, "");
-
- public:
-  template <typename... Args>
-  ExclusiveCacheLine(Args... args) : t_(std::forward<Args>(args)...) {}
-
-  T& get() { return t_; }
-  const T& get() const { return t_; }
-
- private:
-  T t_;
-};
-
 template <AtomType T, size_t kBufferSize = 128>
 class Queue {
   struct Tag {
     static_assert((kBufferSize & (kBufferSize - 1)) == 0, "");
 
+    // Assuming sizeof(Data) == 16, kIncrement will make it so that adjacent
+    // values will always be on separate cache lines.
     static constexpr uint64_t kIncrement =
         1 + hardware_destructive_interference_size / 16;
     static constexpr uint64_t kBufferWrapDelta = kBufferSize * kIncrement;
     static constexpr uint64_t kBufferSizeMask = kBufferSize - 1;
+    static constexpr uint64_t kConsumerFlag = (1ULL << 63);
+    static constexpr uint64_t kWaitingFlag = (1ULL << 62);
 
-    uint64_t value;
+    uint64_t raw;
 
-    Tag(uint64_t value) : value(value) {}
+    Tag(uint64_t raw) : raw(raw) {}
     Tag() : Tag(0) {}
 
     Tag& operator++() {
-      value += kIncrement;
+      raw += kIncrement;
       return *this;
     }
 
     Tag& operator++(int) {
       Tag orig{*this};
-      value += kIncrement;
+      raw += kIncrement;
       return orig;
     }
 
     auto operator<=>(const Tag&) const = default;
 
-    Tag prev_paired_tag() const {
-      return Tag{.value = value - kBufferWrapDelta};
+    std::string DebugString() const {
+      return "Tag<" + std::string(is_producer() ? "P" : "C") +
+             (is_waiting() ? std::string("|W") : "") + ">{" +
+             std::to_string(value()) + "}";
     }
 
-    bool is_paired(Tag observed_tag) const {
+    uint64_t value() const { return (raw << 2) >> 2; }
+
+    Tag prev_paired_tag() const {
       if (is_consumer()) {
-        return (value ^ observed_tag.value) == (1ULL << 63);
+        return Tag{(raw ^ kConsumerFlag) & ~kWaitingFlag};
       } else {
-        return observed_tag.value == ((value - kBufferWrapDelta) | (1ULL << 63));
+        return Tag{((raw - kBufferWrapDelta) ^ kConsumerFlag) & ~kWaitingFlag};
       }
     }
 
-    bool is_producer() const {
-      return value >> 63 == 0;
+    bool is_paired(Tag observed_tag) const {
+      return prev_paired_tag().raw == (observed_tag.raw & ~kWaitingFlag);
     }
 
-    void mark_as_producer() {
-      value &= ~(1ULL << 63);
-    }
+    bool is_producer() const { return (raw & kConsumerFlag) == 0; }
 
-    bool is_consumer() const {
-      return value >> 63 == 1;
-    }
+    void mark_as_producer() { raw &= ~kConsumerFlag; }
 
-    void mark_as_consumer() {
-      value |= (1ULL << 63);
-    }
+    bool is_consumer() const { return (raw & kConsumerFlag) > 0; }
 
-    Tag next_wrapped_tag() const {
-      return Tag(value + kBufferWrapDelta);
-    }
+    void mark_as_consumer() { raw |= kConsumerFlag; }
 
-    int to_index() const {
-      return value & kBufferSizeMask;
-    }
+    void mark_as_waiting() { raw |= kWaitingFlag; }
+
+    bool is_waiting() const { return (raw & kWaitingFlag) > 0; }
+
+    void clear_waiting_flag() { raw &= ~kWaitingFlag; }
+
+    int to_index() const { return raw & kBufferSizeMask; }
   };
   static_assert(sizeof(Tag) == sizeof(uint64_t), "");
 
@@ -134,11 +123,20 @@ class Queue {
       Tag head_tag;
       Tag tail_tag;
     };
+    struct {
+      std::atomic<Tag> head_tag_atomic;
+      std::atomic<Tag> tail_tag_atomic;
+    };
     std::atomic<__int128> line;
 
     HeadTail(Tag head, Tag tail) : head_tag(head), tail_tag(tail) {}
     HeadTail(__int128 from_line) : line(from_line) {}
     HeadTail() : HeadTail(/*line=*/0) {}
+
+    std::string DebugString() const {
+      return "HeadTail{head=" + head_tag.DebugString() +
+             ", tail=" + tail_tag.DebugString() + "}";
+    }
   };
   static_assert(sizeof(HeadTail) == sizeof(HeadTail::line), "");
 
@@ -156,18 +154,32 @@ class Queue {
     Data(T value_, Tag tag_) : value(value_), tag(tag_) {}
     Data(__int128 line) : line(line) {}
     Data() : Data(/*line=*/0) {}
+    Data(const Data& other)
+        : Data(other.line.load(std::memory_order::relaxed)) {}
+    Data& operator=(const Data& other) {
+      line.store(other.line.load(std::memory_order::relaxed),
+                 std::memory_order::relaxed);
+      return *this;
+    }
+
+    std::string DebugString() const {
+      return "Data{value=" + std::string(bool(value) ? "####" : "null") + ", " +
+             tag.DebugString() + "}";
+    }
   };
   static_assert(sizeof(Data) == sizeof(Data::line), "");
   static_assert(sizeof(Data) == 16, "");
 
  public:
-  Queue() : head_tail_(Tag{}, Tag{}), buffer_(kBufferSize) {
+  Queue() : buffer_(kBufferSize) {
     Tag tag;
     tag.mark_as_consumer();
     for (size_t i = 0; i < buffer_.size(); i++) {
       buffer_[tag.to_index()].tag = tag;
       ++tag;
     }
+    head_tail_.head_tag = Tag{Tag::kBufferWrapDelta};
+    head_tail_.tail_tag = Tag{Tag::kBufferWrapDelta};
     std::atomic_thread_fence(std::memory_order::release);
   }
   Queue(const QueueOpts&) : Queue() {}
@@ -188,40 +200,66 @@ class Queue {
                                  .line.load(std::memory_order::relaxed);
     HeadTail want;
     Tag claimed_tail_tag;
+    bool signal_waiters = false;
     do {
       HeadTail expected{expected_line};
       claimed_tail_tag = expected.tail_tag;
-      if (claimed_tail_tag.value >=
-          expected.head_tag.value + Tag::kBufferWrapDelta) {
+      if (claimed_tail_tag.value() >=
+          expected.head_tag.value() + Tag::kBufferWrapDelta) {
         return false;
       }
       want.head_tag = expected.head_tag;
       want.tail_tag = expected.tail_tag;
+      if (expected.tail_tag.is_waiting()) {
+        want.tail_tag.clear_waiting_flag();
+        signal_waiters = true;
+      } else {
+        signal_waiters = false;
+      }
       ++want.tail_tag;
-    } while (!head_tail_.get().line.compare_exchange_weak(
+    } while (!head_tail_.line.compare_exchange_weak(
         expected_line, want.line, std::memory_order::release,
         std::memory_order::relaxed));
 
-    Data new_data{/*value_=*/val, /*tag_=*/claimed_tail_tag};
+    if (signal_waiters) {
+      head_tail_.tail_tag_atomic.notify_all();
+    }
+
     int idx = claimed_tail_tag.to_index();
-    __int128 expected_data_line = 0;
-    do {
-      Data expected_data{/*line=*/expected_data_line};
-      expected_data.tag = claimed_tail_tag;
-      expected_data.tag.mark_as_consumer();
-      expected_data_line = expected_data.line.load(std::memory_order::relaxed);
-    } while (!buffer_[idx].line.compare_exchange_weak(
-        expected_data_line, new_data.line, std::memory_order::release,
-        std::memory_order::relaxed));
+    Data observed_data;
+    Data new_data{/*value_=*/val, /*tag_=*/claimed_tail_tag};
+    while (true) {
+      // TODO(lpe): This puts the cache line in a shared mode, when we expect to
+      // need to issue a request for ownership. Maybe doing the read via
+      // compare_exchange_weak will be faster?
+      __int128 observed_data_line =
+          buffer_[idx].line.load(std::memory_order::acquire);
+      observed_data = Data{/*line=*/observed_data_line};
+      signal_waiters = observed_data.tag.is_waiting();
+
+      if (claimed_tail_tag.is_paired(observed_data.tag)) {
+        break;
+      }
+
+      wait_for_data(idx, claimed_tail_tag, observed_data.tag);
+    }
+
+    Data old_data{buffer_[idx].line.exchange(
+        new_data.line.load(std::memory_order::relaxed),
+        std::memory_order::acq_rel)};
+    if (old_data.tag.is_waiting()) {
+      buffer_[idx].tag_atomic.notify_all();
+    }
 
     return true;
-  }
+    }
 
   T pop_front() {
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
     HeadTail want;
     Tag claimed_head_tag;
+    bool signal_waiters = false;
     do {
       HeadTail expected{expected_line};
       if (expected.head_tag == expected.tail_tag) {
@@ -229,25 +267,47 @@ class Queue {
       }
       want.head_tag = expected.head_tag;
       want.tail_tag = expected.tail_tag;
-      claimed_head_tag = expected.head_tag;
+      if (expected.head_tag.is_waiting()) {
+        want.head_tag.clear_waiting_flag();
+        signal_waiters = true;
+      } else {
+        signal_waiters = false;
+      }
+      claimed_head_tag = want.head_tag;
       ++want.head_tag;
-    } while (!head_tail_.get().line.compare_exchange_weak(
+    } while (!head_tail_.line.compare_exchange_weak(
         expected_line, want.line, std::memory_order::release,
         std::memory_order::relaxed));
+
+    if (signal_waiters) {
+      head_tail_.head_tag_atomic.notify_all();
+    }
 
     claimed_head_tag.mark_as_consumer();
 
     int idx = claimed_head_tag.to_index();
+    Data observed_data;
     while (true) {
-      __int128 observed_data_line =
-          buffer_[idx].line.load(std::memory_order::acquire);
-      Data observed_data{/*line=*/observed_data_line};
+      observed_data =
+          Data{/*line=*/buffer_[idx].line.load(std::memory_order::acquire)};
+      CHECK(claimed_head_tag != observed_data.tag)
+          << "claimed: " << claimed_head_tag.DebugString()
+          << ", observed: " << observed_data.tag.DebugString();
+
       if (claimed_head_tag.is_paired(observed_data.tag)) {
-        buffer_[idx].tag_atomic.store(claimed_head_tag.next_wrapped_tag(),
-                                      std::memory_order::release);
-        return observed_data.value;
+        break;
       }
+
+      wait_for_data(idx, claimed_head_tag, observed_data.tag);
     }
+
+    Tag observed_tag = buffer_[idx].tag_atomic.exchange(
+        claimed_head_tag, std::memory_order::acq_rel);
+    if (observed_tag.is_waiting()) {
+      buffer_[idx].tag_atomic.notify_all();
+    }
+
+    return observed_data.value;
   }
 
   size_t size() const {
@@ -258,12 +318,29 @@ class Queue {
   static constexpr size_t capacity() { return kBufferSize; }
 
  private:
-  ExclusiveCacheLine<HeadTail> head_tail_;
-  std::vector<Data> buffer_;
+  alignas(hardware_destructive_interference_size) HeadTail head_tail_;
+  alignas(hardware_destructive_interference_size) std::vector<Data> buffer_;
 
   HeadTail get_head_tail(
       std::memory_order mem_order = std::memory_order::acquire) const {
-    return HeadTail{head_tail_.get().line.load(mem_order)};
+    return HeadTail{head_tail_.line.load(mem_order)};
+  }
+
+  void wait_for_data(int idx, Tag claimed_tag, Tag observed_tag) {
+    while (true) {
+      Tag want_tag{observed_tag};
+      want_tag.mark_as_waiting();
+      if (buffer_[idx].tag_atomic.compare_exchange_weak(
+              observed_tag, want_tag, std::memory_order::release,
+              std::memory_order::relaxed)) {
+        buffer_[idx].tag_atomic.wait(want_tag, std::memory_order::acquire);
+        break;
+      }
+
+      if (claimed_tag.is_paired(observed_tag)) {
+        break;
+      }
+    }
   }
 };
 
