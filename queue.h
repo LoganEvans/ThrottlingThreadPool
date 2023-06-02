@@ -83,7 +83,7 @@ class Queue {
     std::string DebugString() const {
       return "Tag<" + std::string(is_producer() ? "P" : "C") +
              (is_waiting() ? std::string("|W") : "") + ">{" +
-             std::to_string(value()) + "}";
+             std::to_string(value()) + "@" + std::to_string(to_index()) + "}";
     }
 
     uint64_t value() const { return (raw << 2) >> 2; }
@@ -126,6 +126,10 @@ class Queue {
     struct {
       std::atomic<Tag> head_tag_atomic;
       std::atomic<Tag> tail_tag_atomic;
+    };
+    struct {
+      std::atomic<uint64_t> head_tag_raw_atomic;
+      std::atomic<uint64_t> tail_tag_raw_atomic;
     };
     std::atomic<__int128> line;
 
@@ -186,16 +190,38 @@ class Queue {
 
   ~Queue() {
     while (true) {
-      auto v = pop_front();
+      auto v = try_pop_front();
       if (!v) {
         break;
       }
     }
   }
 
-  bool push_back(T val) { return push_back(val, nullptr); }
+  void push_back(const T& val) {
+    Tag tag{/*raw=*/head_tail_.tail_tag_raw_atomic.fetch_add(
+        Tag::kIncrement, std::memory_order::acq_rel)};
+    bool signal_waiters = tag.is_waiting();
+    if (signal_waiters) {
+      tag.clear_waiting_flag();
+    }
+    push(val, tag);
 
-  bool push_back(T val, size_t* num_items) {
+    while (signal_waiters) {
+      Tag want{tag};
+      want.clear_waiting_flag();
+      if (head_tail_.tail_tag_atomic.compare_exchange_weak(
+              tag, want, std::memory_order::release,
+              std::memory_order::relaxed)) {
+        head_tail_.tail_tag_atomic.notify_all();
+        break;
+      }
+      signal_waiters = tag.is_waiting();
+    }
+  }
+
+  bool try_push_back(const T& val) { return try_push_back(val, nullptr); }
+
+  bool try_push_back(const T& val, size_t* num_items) {
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
     HeadTail want;
@@ -221,40 +247,45 @@ class Queue {
         expected_line, want.line, std::memory_order::release,
         std::memory_order::relaxed));
 
+    if (num_items) {
+      *num_items = want.tail_tag.value() - want.head_tag.value();
+    }
+
+    push(val, claimed_tail_tag);
+
     if (signal_waiters) {
       head_tail_.tail_tag_atomic.notify_all();
     }
 
-    int idx = claimed_tail_tag.to_index();
-    Data observed_data;
-    Data new_data{/*value_=*/val, /*tag_=*/claimed_tail_tag};
-    while (true) {
-      // TODO(lpe): This puts the cache line in a shared mode, when we expect to
-      // need to issue a request for ownership. Maybe doing the read via
-      // compare_exchange_weak will be faster?
-      __int128 observed_data_line =
-          buffer_[idx].line.load(std::memory_order::acquire);
-      observed_data = Data{/*line=*/observed_data_line};
-      signal_waiters = observed_data.tag.is_waiting();
-
-      if (claimed_tail_tag.is_paired(observed_data.tag)) {
-        break;
-      }
-
-      wait_for_data(idx, claimed_tail_tag, observed_data.tag);
-    }
-
-    Data old_data{buffer_[idx].line.exchange(
-        new_data.line.load(std::memory_order::relaxed),
-        std::memory_order::acq_rel)};
-    if (old_data.tag.is_waiting()) {
-      buffer_[idx].tag_atomic.notify_all();
-    }
-
     return true;
-    }
+  }
 
   T pop_front() {
+    Tag tag{/*raw=*/head_tail_.head_tag_raw_atomic.fetch_add(
+        Tag::kIncrement, std::memory_order::acq_rel)};
+    tag.mark_as_consumer();
+    bool signal_waiters = tag.is_waiting();
+    if (signal_waiters) {
+      tag.clear_waiting_flag();
+    }
+    T val{pop(tag)};
+
+    while (signal_waiters) {
+      Tag want{tag};
+      want.clear_waiting_flag();
+      if (head_tail_.head_tag_atomic.compare_exchange_weak(
+              tag, want, std::memory_order::release,
+              std::memory_order::relaxed)) {
+        head_tail_.head_tag_atomic.notify_all();
+        break;
+      }
+      signal_waiters = tag.is_waiting();
+    }
+
+    return val;
+  }
+
+  std::optional<T> try_pop_front() {
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
     HeadTail want;
@@ -263,7 +294,7 @@ class Queue {
     do {
       HeadTail expected{expected_line};
       if (expected.head_tag == expected.tail_tag) {
-        return T{};
+        return {};
       }
       want.head_tag = expected.head_tag;
       want.tail_tag = expected.tail_tag;
@@ -279,10 +310,6 @@ class Queue {
         expected_line, want.line, std::memory_order::release,
         std::memory_order::relaxed));
 
-    if (signal_waiters) {
-      head_tail_.head_tag_atomic.notify_all();
-    }
-
     claimed_head_tag.mark_as_consumer();
 
     int idx = claimed_head_tag.to_index();
@@ -290,21 +317,22 @@ class Queue {
     while (true) {
       observed_data =
           Data{/*line=*/buffer_[idx].line.load(std::memory_order::acquire)};
-      CHECK(claimed_head_tag != observed_data.tag)
-          << "claimed: " << claimed_head_tag.DebugString()
-          << ", observed: " << observed_data.tag.DebugString();
 
       if (claimed_head_tag.is_paired(observed_data.tag)) {
         break;
       }
 
-      wait_for_data(idx, claimed_head_tag, observed_data.tag);
+      wait_for_data(claimed_head_tag, observed_data.tag);
     }
 
     Tag observed_tag = buffer_[idx].tag_atomic.exchange(
         claimed_head_tag, std::memory_order::acq_rel);
     if (observed_tag.is_waiting()) {
       buffer_[idx].tag_atomic.notify_all();
+    }
+
+    if (signal_waiters) {
+      head_tail_.head_tag_atomic.notify_all();
     }
 
     return observed_data.value;
@@ -326,11 +354,66 @@ class Queue {
     return HeadTail{head_tail_.line.load(mem_order)};
   }
 
-  void wait_for_data(int idx, Tag claimed_tag, Tag observed_tag) {
+  void push(const T& val, const Tag& tag) {
+    DCHECK(!tag.is_waiting());
+
+    int idx = tag.to_index();
+
+    Data observed_data;
+    while (true) {
+      __int128 observed_data_line =
+          buffer_[idx].line.load(std::memory_order::acquire);
+      observed_data = Data{/*line=*/observed_data_line};
+
+      if (tag.is_paired(observed_data.tag)) {
+        break;
+      }
+
+      wait_for_data(tag, observed_data.tag);
+    }
+
+    Data new_data{/*value_=*/val, /*tag_=*/tag};
+    Data old_data{buffer_[idx].line.exchange(
+        new_data.line.load(std::memory_order::relaxed),
+        std::memory_order::acq_rel)};
+    if (old_data.tag.is_waiting()) {
+      buffer_[idx].tag_atomic.notify_all();
+    }
+  }
+
+  T pop(const Tag& tag) {
+    DCHECK(!tag.is_waiting());
+
+    int idx = tag.to_index();
+
+    Data observed_data;
+    while (true) {
+      observed_data =
+          Data{/*line=*/buffer_[idx].line.load(std::memory_order::acquire)};
+
+      if (tag.is_paired(observed_data.tag)) {
+        break;
+      }
+
+      wait_for_data(tag, observed_data.tag);
+    }
+
+    Tag old_tag = buffer_[idx].tag_atomic.exchange(
+        tag, std::memory_order::acq_rel);
+    if (old_tag.is_waiting()) {
+      buffer_[idx].tag_atomic.notify_all();
+    }
+
+    return observed_data.value;
+  }
+
+  void wait_for_data(const Tag& claimed_tag, Tag observed_tag) {
+    int idx = claimed_tag.to_index();
     while (true) {
       Tag want_tag{observed_tag};
       want_tag.mark_as_waiting();
-      if (buffer_[idx].tag_atomic.compare_exchange_weak(
+      if ((observed_tag == want_tag) ||
+          buffer_[idx].tag_atomic.compare_exchange_weak(
               observed_tag, want_tag, std::memory_order::release,
               std::memory_order::relaxed)) {
         buffer_[idx].tag_atomic.wait(want_tag, std::memory_order::acquire);
@@ -381,16 +464,16 @@ class MPSCQueue {
 
   ~MPSCQueue() {
     while (true) {
-      auto v = pop_front();
+      auto v = try_pop_front();
       if (!v) {
         break;
       }
     }
   }
 
-  bool push_back(T val) { return push_back(val, nullptr); }
+  bool try_push_back(T val) { return try_push_back(val, nullptr); }
 
-  bool push_back(T val, size_t* num_items) {
+  bool try_push_back(T val, size_t* num_items) {
     DCHECK(val);
     uint64_t expected = ht_.line.load(std::memory_order::acquire);
     uint32_t head, tail;
@@ -433,10 +516,10 @@ class MPSCQueue {
     return true;
   }
 
-  T pop_front() {
+  std::optional<T> try_pop_front() {
     auto maybe_index = reserve_for_pop();
     if (!maybe_index.has_value()) {
-      return T{};
+      return {};
     }
     auto index = maybe_index.value();
 
@@ -493,7 +576,7 @@ class MPSCQueue {
   // fast-mode can be. At the worst, it will be possible to set a bit that flags
   // all operations to block.
 
-  union HeadTail {
+  union alignas(hardware_destructive_interference_size) HeadTail {
     struct {
       uint32_t head;
       uint32_t tail;
@@ -504,7 +587,8 @@ class MPSCQueue {
     HeadTail(uint32_t head, uint32_t tail) : head(head), tail(tail) {}
   } ht_;
 
-  std::vector<std::atomic<T>> buf_;
+  alignas(
+      hardware_destructive_interference_size) std::vector<std::atomic<T>> buf_;
 
   static inline constexpr size_t size(uint64_t line, size_t buf_size) {
     uint32_t head = HeadTail(line).head;
