@@ -16,7 +16,7 @@ static void BM_multi_producer_single_consumer(benchmark::State &state) {
   auto work = [&]() {
     int foo;
     while (!done.load(std::memory_order::acquire)) {
-      queue.try_push_back(&foo);
+      queue.try_push(&foo);
     }
   };
 
@@ -26,7 +26,7 @@ static void BM_multi_producer_single_consumer(benchmark::State &state) {
   }
 
   for (auto _ : state) {
-    queue.try_pop_front();
+    queue.try_pop();
   }
 
   done.store(true, std::memory_order::release);
@@ -43,13 +43,14 @@ static void BM_multi_producer_single_consumer(benchmark::State &state) {
 //    ->Args({8})
 //    ->Args({12})
 //    ->Args({24});
-//BENCHMARK_TEMPLATE(BM_multi_producer_single_consumer, Queue<int*>)
-//    ->Args({1})
-//    ->Args({2})
-//    ->Args({4})
-//    ->Args({8})
-//    ->Args({12})
-//    ->Args({24});
+BENCHMARK_TEMPLATE(BM_multi_producer_single_consumer, Queue<int*>)
+    ->Args({1})
+    ->Args({2})
+    ->Args({4})
+    ->Args({8})
+    ->Args({12})
+    ->Args({24})
+    ;
 
 template <typename QType>
 static void BM_multi_producer_multi_consumer_try(benchmark::State &state) {
@@ -61,7 +62,7 @@ static void BM_multi_producer_multi_consumer_try(benchmark::State &state) {
 
   auto consumer_work = [&]() {
     while (true) {
-      auto x = queue.try_pop_front();
+      auto x = queue.try_pop();
       if (x == &end_sentinel) {
         return;
       }
@@ -81,7 +82,7 @@ static void BM_multi_producer_multi_consumer_try(benchmark::State &state) {
         if (done.load(std::memory_order::acquire) ||
             !state.KeepRunningBatch(kBatchSize)) {
           done.store(true, std::memory_order::release);
-          while (!queue.try_push_back(&end_sentinel)) {
+          while (!queue.try_push(&end_sentinel)) {
           }
           return;
         }
@@ -89,7 +90,7 @@ static void BM_multi_producer_multi_consumer_try(benchmark::State &state) {
 
       int foo;
       for (size_t i = 0; i < kBatchSize; i++) {
-        queue.try_push_back(&foo);
+        queue.try_push(&foo);
       }
     }
   };
@@ -108,24 +109,24 @@ static void BM_multi_producer_multi_consumer_try(benchmark::State &state) {
   }
 }
 
-BENCHMARK_TEMPLATE(BM_multi_producer_multi_consumer_try, MPSCQueue<int*>)
-    ->Args({1})
-    ->Args({2})
-    ->Args({4})
-    ->Args({6})
-    ->Args({8})
-    ->Args({12})
-    ->Args({24});
-
-BENCHMARK_TEMPLATE(BM_multi_producer_multi_consumer_try, Queue<int*>)
-    ->Args({1})
-    ->Args({2})
-    ->Args({4})
-    ->Args({6})
-    ->Args({8})
-    ->Args({12})
-    ->Args({24})
-    ;
+//BENCHMARK_TEMPLATE(BM_multi_producer_multi_consumer_try, MPSCQueue<int*>)
+//    ->Args({1})
+//    ->Args({2})
+//    ->Args({4})
+//    ->Args({6})
+//    ->Args({8})
+//    ->Args({12})
+//    ->Args({24});
+//
+//BENCHMARK_TEMPLATE(BM_multi_producer_multi_consumer_try, Queue<int*>)
+//    ->Args({1})
+//    ->Args({2})
+//    ->Args({4})
+//    ->Args({6})
+//    ->Args({8})
+//    ->Args({12})
+//    ->Args({24})
+//    ;
 
 template <typename QType>
 static void BM_multi_producer_multi_consumer(benchmark::State &state) {
@@ -137,7 +138,7 @@ static void BM_multi_producer_multi_consumer(benchmark::State &state) {
 
   auto consumer_work = [&]() {
     while (true) {
-      auto x = queue.pop_front();
+      auto x = queue.pop();
       if (x == &end_sentinel) {
         return;
       }
@@ -157,14 +158,14 @@ static void BM_multi_producer_multi_consumer(benchmark::State &state) {
         if (done.load(std::memory_order::acquire) ||
             !state.KeepRunningBatch(kBatchSize)) {
           done.store(true, std::memory_order::release);
-          queue.push_back(&end_sentinel);
+          queue.push(&end_sentinel);
           return;
         }
       }
 
       int foo;
       for (size_t i = 0; i < kBatchSize; i++) {
-        queue.push_back(&foo);
+        queue.push(&foo);
       }
     }
   };
@@ -183,15 +184,15 @@ static void BM_multi_producer_multi_consumer(benchmark::State &state) {
   }
 }
 
-BENCHMARK_TEMPLATE(BM_multi_producer_multi_consumer, Queue<int*>)
-    ->Args({1})
-    ->Args({2})
-    ->Args({4})
-    ->Args({6})
-    ->Args({8})
-    ->Args({12})
-    ->Args({24})
-    ;
+//BENCHMARK_TEMPLATE(BM_multi_producer_multi_consumer, Queue<int*>)
+//    ->Args({1})
+//    ->Args({2})
+//    ->Args({4})
+//    ->Args({6})
+//    ->Args({8})
+//    ->Args({12})
+//    ->Args({24})
+//    ;
 
 }  // namespace theta
 

@@ -190,22 +190,22 @@ class Queue {
 
   ~Queue() {
     while (true) {
-      auto v = try_pop_front();
+      auto v = try_pop();
       if (!v) {
         break;
       }
     }
   }
 
-  void push_back(const T& val) {
+  void push(T&& val) {
     Tag tag{/*raw=*/head_tail_.tail_tag_raw_atomic.fetch_add(
         Tag::kIncrement, std::memory_order::acq_rel)};
-    push(val, tag);
+    do_push(std::move(val), tag);
   }
 
-  bool try_push_back(const T& val) { return try_push_back(val, nullptr); }
+  bool try_push(T&& val) { return try_push(std::move(val), nullptr); }
 
-  bool try_push_back(const T& val, size_t* num_items) {
+  bool try_push(T&& val, size_t* num_items) {
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
     HeadTail want;
@@ -228,19 +228,19 @@ class Queue {
       *num_items = want.tail_tag.value() - want.head_tag.value();
     }
 
-    push(val, claimed_tail_tag);
+    do_push(std::move(val), claimed_tail_tag);
 
     return true;
   }
 
-  T pop_front() {
+  T pop() {
     Tag tag{/*raw=*/head_tail_.head_tag_raw_atomic.fetch_add(
         Tag::kIncrement, std::memory_order::acq_rel)};
     tag.mark_as_consumer();
-    return pop(tag);
+    return do_pop(tag);
   }
 
-  std::optional<T> try_pop_front() {
+  std::optional<T> try_pop() {
     __int128 expected_line = get_head_tail(std::memory_order::acquire)
                                  .line.load(std::memory_order::relaxed);
     HeadTail want;
@@ -259,7 +259,7 @@ class Queue {
         std::memory_order::relaxed));
 
     claimed_head_tag.mark_as_consumer();
-    return pop(claimed_head_tag);
+    return do_pop(claimed_head_tag);
   }
 
   size_t size() const {
@@ -278,7 +278,7 @@ class Queue {
     return HeadTail{head_tail_.line.load(mem_order)};
   }
 
-  void push(const T& val, const Tag& tag) {
+  void do_push(T&& val, const Tag& tag) {
     DCHECK(!tag.is_waiting());
 
     int idx = tag.to_index();
@@ -308,7 +308,7 @@ class Queue {
     }
   }
 
-  T pop(const Tag& tag) {
+  T do_pop(const Tag& tag) {
     DCHECK(!tag.is_waiting());
 
     int idx = tag.to_index();
@@ -326,7 +326,7 @@ class Queue {
     }
 
     // This is another strange issue -- it is faster to exchange the __int128
-    // value backin the Data object instead of just exchanging the 8 byte tag
+    // value backing the Data object instead of just exchanging the 8 byte tag
     // value inside of that Data object.
     Data old_data{buffer_[idx].line.exchange(
         Data{/*value=*/T{}, /*tag=*/tag}.line.load(std::memory_order::relaxed),
@@ -396,16 +396,16 @@ class MPSCQueue {
 
   ~MPSCQueue() {
     while (true) {
-      auto v = try_pop_front();
+      auto v = try_pop();
       if (!v) {
         break;
       }
     }
   }
 
-  bool try_push_back(T val) { return try_push_back(val, nullptr); }
+  bool try_push(T val) { return try_push(val, nullptr); }
 
-  bool try_push_back(T val, size_t* num_items) {
+  bool try_push(T val, size_t* num_items) {
     DCHECK(val);
     uint64_t expected = ht_.line.load(std::memory_order::acquire);
     uint32_t head, tail;
@@ -448,7 +448,7 @@ class MPSCQueue {
     return true;
   }
 
-  std::optional<T> try_pop_front() {
+  std::optional<T> try_pop() {
     auto maybe_index = reserve_for_pop();
     if (!maybe_index.has_value()) {
       return {};
