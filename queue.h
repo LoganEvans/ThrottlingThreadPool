@@ -53,11 +53,11 @@ class Queue {
   struct Tag {
     static_assert((kBufferSize & (kBufferSize - 1)) == 0, "");
 
-    // Assuming sizeof(Data) == 16, kIncrement will make it so that adjacent
-    // values will always be on separate cache lines.
-    // XXX
-    //static constexpr uint64_t kIncrement =
-    //    1 + hardware_destructive_interference_size / 16;
+    // An kIncrement value of
+    //   kIncrement = 1 + hardware_destructive_interference_size / sizeof(T)
+    // would make it so that adjacent values will always be on separate cache
+    // lines. However, benchmarks don't show that this attempt to avoiding
+    // false sharing helps.
     static constexpr uint64_t kIncrement = 1;
     static constexpr uint64_t kBufferWrapDelta = kBufferSize * kIncrement;
     static constexpr uint64_t kBufferSizeMask = kBufferSize - 1;
