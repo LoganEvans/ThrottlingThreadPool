@@ -55,8 +55,10 @@ class Queue {
 
     // Assuming sizeof(Data) == 16, kIncrement will make it so that adjacent
     // values will always be on separate cache lines.
-    static constexpr uint64_t kIncrement =
-        1 + hardware_destructive_interference_size / 16;
+    // XXX
+    //static constexpr uint64_t kIncrement =
+    //    1 + hardware_destructive_interference_size / 16;
+    static constexpr uint64_t kIncrement = 1;
     static constexpr uint64_t kBufferWrapDelta = kBufferSize * kIncrement;
     static constexpr uint64_t kBufferSizeMask = kBufferSize - 1;
     static constexpr uint64_t kConsumerFlag = (1ULL << 63);
@@ -73,9 +75,18 @@ class Queue {
     }
 
     Tag& operator++(int) {
-      Tag orig{*this};
       raw += kIncrement;
-      return orig;
+      return *this;
+    }
+
+    Tag& operator--() {
+      raw -= kIncrement;
+      return *this;
+    }
+
+    Tag& operator--(int) {
+      raw -= kIncrement;
+      return *this;
     }
 
     auto operator<=>(const Tag&) const = default;
@@ -118,31 +129,25 @@ class Queue {
   };
   static_assert(sizeof(Tag) == sizeof(uint64_t), "");
 
-  union HeadTail {
+  union Index {
     struct {
-      Tag head_tag;
-      Tag tail_tag;
+      Tag tag;
     };
     struct {
-      std::atomic<Tag> head_tag_atomic;
-      std::atomic<Tag> tail_tag_atomic;
+      std::atomic<Tag> tag_atomic;
     };
     struct {
-      std::atomic<uint64_t> head_tag_raw_atomic;
-      std::atomic<uint64_t> tail_tag_raw_atomic;
+      std::atomic<uint64_t> tag_raw_atomic;
     };
-    std::atomic<__int128> line;
 
-    HeadTail(Tag head, Tag tail) : head_tag(head), tail_tag(tail) {}
-    HeadTail(__int128 from_line) : line(from_line) {}
-    HeadTail() : HeadTail(/*line=*/0) {}
+    Index(Tag tag) : tag(tag) {}
+    Index() : Index(/*tag=*/0) {}
 
     std::string DebugString() const {
-      return "HeadTail{head=" + head_tag.DebugString() +
-             ", tail=" + tail_tag.DebugString() + "}";
+      return "Index{tag=" + tag.DebugString() + "}";
     }
   };
-  static_assert(sizeof(HeadTail) == sizeof(HeadTail::line), "");
+  static_assert(sizeof(Index) == sizeof(Tag), "");
 
   union Data {
     struct {
@@ -175,15 +180,16 @@ class Queue {
   static_assert(sizeof(Data) == 16, "");
 
  public:
-  Queue() : buffer_(kBufferSize) {
+  Queue()
+      : head_(Tag::kBufferWrapDelta),
+        tail_(Tag::kBufferWrapDelta),
+        buffer_(kBufferSize) {
     Tag tag;
     tag.mark_as_consumer();
     for (size_t i = 0; i < buffer_.size(); i++) {
       buffer_[tag.to_index()].tag = tag;
       ++tag;
     }
-    head_tail_.head_tag = Tag{Tag::kBufferWrapDelta};
-    head_tail_.tail_tag = Tag{Tag::kBufferWrapDelta};
     std::atomic_thread_fence(std::memory_order::release);
   }
   Queue(const QueueOpts&) : Queue() {}
@@ -197,88 +203,79 @@ class Queue {
     }
   }
 
-  void push(T&& val) {
-    Tag tag{/*raw=*/head_tail_.tail_tag_raw_atomic.fetch_add(
-        Tag::kIncrement, std::memory_order::acq_rel)};
-    do_push(std::move(val), tag);
+  void push(T val) {
+    Tag tail{tail_.tag_raw_atomic.fetch_add(Tag::kIncrement,
+                                            std::memory_order::acq_rel)};
+    do_push(std::move(val), tail);
   }
 
-  bool try_push(T&& val) { return try_push(std::move(val), nullptr); }
+  bool try_push(T val) {
+    const Tag head{head_.tag_atomic.load(std::memory_order::acquire)};
 
-  bool try_push(T&& val, size_t* num_items) {
-    __int128 expected_line = get_head_tail(std::memory_order::acquire)
-                                 .line.load(std::memory_order::relaxed);
-    HeadTail want;
-    Tag claimed_tail_tag;
-    do {
-      HeadTail expected{expected_line};
-      claimed_tail_tag = expected.tail_tag;
-      if (claimed_tail_tag.value() >=
-          expected.head_tag.value() + Tag::kBufferWrapDelta) {
+    Tag expected_tail{head};
+    Tag desired_tail{expected_tail};
+    desired_tail++;
+
+    while (!tail_.tag_atomic.compare_exchange_weak(
+        expected_tail, desired_tail, std::memory_order::release,
+        std::memory_order::relaxed)) {
+      desired_tail = expected_tail;
+      desired_tail++;
+      if (desired_tail.raw >= head.raw + Tag::kBufferWrapDelta) {
         return false;
       }
-      want.head_tag = expected.head_tag;
-      want.tail_tag = expected.tail_tag;
-      ++want.tail_tag;
-    } while (!head_tail_.line.compare_exchange_weak(
-        expected_line, want.line, std::memory_order::release,
-        std::memory_order::relaxed));
-
-    if (num_items) {
-      *num_items = want.tail_tag.value() - want.head_tag.value();
     }
 
-    do_push(std::move(val), claimed_tail_tag);
-
+    do_push(std::move(val), expected_tail);
     return true;
   }
 
   T pop() {
-    Tag tag{/*raw=*/head_tail_.head_tag_raw_atomic.fetch_add(
-        Tag::kIncrement, std::memory_order::acq_rel)};
+    Tag tag{/*raw=*/head_.tag_raw_atomic.fetch_add(Tag::kIncrement,
+                                                   std::memory_order::acq_rel)};
     tag.mark_as_consumer();
     return do_pop(tag);
   }
 
   std::optional<T> try_pop() {
-    __int128 expected_line = get_head_tail(std::memory_order::acquire)
-                                 .line.load(std::memory_order::relaxed);
-    HeadTail want;
-    Tag claimed_head_tag;
-    do {
-      HeadTail expected{expected_line};
-      if (expected.head_tag == expected.tail_tag) {
+    const Tag tail{tail_.tag_atomic.load(std::memory_order::acquire)};
+
+    Tag desired_head{tail.raw};
+    Tag expected_head{desired_head.raw - Tag::kIncrement};
+
+    while (!head_.tag_atomic.compare_exchange_weak(
+        expected_head, desired_head, std::memory_order::release,
+        std::memory_order::relaxed)) {
+      desired_head = expected_head;
+      desired_head++;
+      if (desired_head > tail) {
         return {};
       }
-      want.head_tag = expected.head_tag;
-      want.tail_tag = expected.tail_tag;
-      claimed_head_tag = want.head_tag;
-      ++want.head_tag;
-    } while (!head_tail_.line.compare_exchange_weak(
-        expected_line, want.line, std::memory_order::release,
-        std::memory_order::relaxed));
+    }
 
-    claimed_head_tag.mark_as_consumer();
-    return do_pop(claimed_head_tag);
+    expected_head.mark_as_consumer();
+    return do_pop(expected_head);
   }
 
   size_t size() const {
-    auto ht = get_head_tail();
-    return (ht.tail_tag.value - ht.head_tag.value) / Tag::kIncrement;
+    // Reading head before tail will make it possible to "see" more elements in
+    // the queue than it can hold, but this makes it so that the size will
+    // never be negative.
+    auto head = head_.tag_atomic.load(std::memory_order::acquire);
+    auto tail = tail_.tag_atomic.load(std::memory_order::acquire);
+
+    return (tail.raw - head.raw) / Tag::kIncrement;
   }
 
   static constexpr size_t capacity() { return kBufferSize; }
 
  private:
-  alignas(hardware_destructive_interference_size) HeadTail head_tail_;
+  alignas(hardware_destructive_interference_size) Index head_;
+  alignas(hardware_destructive_interference_size) Index tail_;
   alignas(hardware_destructive_interference_size) std::vector<Data> buffer_;
 
-  HeadTail get_head_tail(
-      std::memory_order mem_order = std::memory_order::acquire) const {
-    return HeadTail{head_tail_.line.load(mem_order)};
-  }
-
-  void do_push(T&& val, const Tag& tag) {
+  void do_push(T val, const Tag& tag) {
+    DCHECK(tag.is_producer());
     DCHECK(!tag.is_waiting());
 
     int idx = tag.to_index();
@@ -309,6 +306,7 @@ class Queue {
   }
 
   T do_pop(const Tag& tag) {
+    DCHECK(tag.is_consumer());
     DCHECK(!tag.is_waiting());
 
     int idx = tag.to_index();

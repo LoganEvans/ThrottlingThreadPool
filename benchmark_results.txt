@@ -5,35 +5,35 @@ CPU Caches:
   L1 Instruction 32 KiB (x6)
   L2 Unified 256 KiB (x6)
   L3 Unified 12288 KiB (x1)
-Load Average: 4.18, 3.47, 2.23
+Load Average: 0.90, 2.97, 2.50
 ***WARNING*** CPU scaling is enabled, the benchmark real time measurements may be noisy and will incur extra overhead.
 ------------------------------------------------------------------------------------------------
 Benchmark                                                      Time             CPU   Iterations
 ------------------------------------------------------------------------------------------------
-BM_multi_producer_single_consumer<Queue<int*>>/1             126 ns          126 ns      5230000
-BM_multi_producer_single_consumer<Queue<int*>>/2             737 ns          737 ns       910000
-BM_multi_producer_single_consumer<Queue<int*>>/4             850 ns          847 ns       980000
-BM_multi_producer_single_consumer<Queue<int*>>/8             964 ns          962 ns       560000
-BM_multi_producer_single_consumer<Queue<int*>>/12           1547 ns         1348 ns      1000000
-BM_multi_producer_single_consumer<Queue<int*>>/24           1520 ns          860 ns      1000000
-BM_multi_producer_single_consumer_try<Queue<int*>>/1         152 ns          152 ns      4960000
-BM_multi_producer_single_consumer_try<Queue<int*>>/2         180 ns          180 ns      4090000
-BM_multi_producer_single_consumer_try<Queue<int*>>/4         202 ns          202 ns      3630000
-BM_multi_producer_single_consumer_try<Queue<int*>>/8         629 ns          629 ns      2680000
-BM_multi_producer_single_consumer_try<Queue<int*>>/12        469 ns          467 ns      1570000
-BM_multi_producer_single_consumer_try<Queue<int*>>/24        783 ns          465 ns      1430000
-BM_multi_producer_multi_consumer_try<Queue<int*>>/1          148 ns          148 ns      4780000
-BM_multi_producer_multi_consumer_try<Queue<int*>>/2          197 ns          197 ns      3550000
-BM_multi_producer_multi_consumer_try<Queue<int*>>/4          271 ns          271 ns      2820000
-BM_multi_producer_multi_consumer_try<Queue<int*>>/6          279 ns          275 ns      2530000
-BM_multi_producer_multi_consumer_try<Queue<int*>>/8          278 ns          148 ns      4560000
-BM_multi_producer_multi_consumer_try<Queue<int*>>/12         303 ns          112 ns      6540000
-BM_multi_producer_multi_consumer_try<Queue<int*>>/24         432 ns         92.9 ns      8210000
-BM_multi_producer_multi_consumer<Queue<int*>>/1              144 ns          144 ns      4350000
-BM_multi_producer_multi_consumer<Queue<int*>>/2              110 ns          110 ns      6180000
-BM_multi_producer_multi_consumer<Queue<int*>>/4              197 ns          197 ns      2830000
-BM_multi_producer_multi_consumer<Queue<int*>>/6              144 ns          138 ns      4510000
-BM_multi_producer_multi_consumer<Queue<int*>>/8              150 ns         79.0 ns      8450000
-BM_multi_producer_multi_consumer<Queue<int*>>/12             188 ns         73.4 ns      9870000
-BM_multi_producer_multi_consumer<Queue<int*>>/24             183 ns         45.3 ns     15950000
+BM_multi_producer_single_consumer<Queue<int*>>/1            77.7 ns         77.6 ns      7690000
+BM_multi_producer_single_consumer<Queue<int*>>/2             720 ns          720 ns       930000
+BM_multi_producer_single_consumer<Queue<int*>>/4             867 ns          864 ns      1000000
+BM_multi_producer_single_consumer<Queue<int*>>/8            1118 ns         1077 ns       610000
+BM_multi_producer_single_consumer<Queue<int*>>/12           1458 ns         1331 ns      1000000
+BM_multi_producer_single_consumer<Queue<int*>>/24           1431 ns          635 ns      1000000
+BM_multi_producer_single_consumer_try<Queue<int*>>/1         129 ns          129 ns      5260000
+BM_multi_producer_single_consumer_try<Queue<int*>>/2         166 ns          166 ns      4360000
+BM_multi_producer_single_consumer_try<Queue<int*>>/4         205 ns          205 ns      3700000
+BM_multi_producer_single_consumer_try<Queue<int*>>/8         326 ns          326 ns      3160000
+BM_multi_producer_single_consumer_try<Queue<int*>>/12        424 ns          421 ns      2160000
+BM_multi_producer_single_consumer_try<Queue<int*>>/24        622 ns          278 ns      3310000
+BM_multi_producer_multi_consumer_try<Queue<int*>>/1          142 ns          142 ns      4880000
+BM_multi_producer_multi_consumer_try<Queue<int*>>/2          141 ns          141 ns      5450000
+BM_multi_producer_multi_consumer_try<Queue<int*>>/4          137 ns          136 ns      4910000
+BM_multi_producer_multi_consumer_try<Queue<int*>>/6          139 ns          139 ns      6090000
+BM_multi_producer_multi_consumer_try<Queue<int*>>/8          167 ns         88.4 ns      8180000
+BM_multi_producer_multi_consumer_try<Queue<int*>>/12         219 ns         80.3 ns      9010000
+BM_multi_producer_multi_consumer_try<Queue<int*>>/24         331 ns         71.7 ns     12830000
+BM_multi_producer_multi_consumer<Queue<int*>>/1              106 ns          106 ns      5940000
+BM_multi_producer_multi_consumer<Queue<int*>>/2             98.8 ns         98.8 ns      6970000
+BM_multi_producer_multi_consumer<Queue<int*>>/4             90.1 ns         90.1 ns      7910000
+BM_multi_producer_multi_consumer<Queue<int*>>/6             74.5 ns         71.8 ns     10150000
+BM_multi_producer_multi_consumer<Queue<int*>>/8              144 ns         77.2 ns      9280000
+BM_multi_producer_multi_consumer<Queue<int*>>/12             180 ns         72.2 ns     10000000
+BM_multi_producer_multi_consumer<Queue<int*>>/24             175 ns         42.3 ns     17620000
 
