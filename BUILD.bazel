@@ -56,6 +56,18 @@ cc_library(
   linkopts = ["-latomic"],
 )
 
+cc_library(
+  name = "moodycamel",
+  srcs = [],
+  hdrs = [
+    "blockingconcurrentqueue.h",
+    "concurrentqueue.h",
+    "lightweightsemaphore.h"
+  ],
+  copts = COPTS,
+  linkopts = ["-latomic"],
+)
+
 cc_test(
   name = "queue_test",
   srcs = ["queue_test.cc"],
@@ -73,6 +85,7 @@ cc_binary(
   name = "queue_benchmark",
   srcs = ["queue_benchmark.cc"],
   deps = [
+    ":moodycamel",
     ":queue",
     "@benchmark//:benchmark",
   ],

@@ -58,7 +58,8 @@ class Queue {
     // would make it so that adjacent values will always be on separate cache
     // lines. However, benchmarks don't show that this attempt to avoiding
     // false sharing helps.
-    static constexpr uint64_t kIncrement = 1;
+    static constexpr uint64_t kIncrement =
+        1 + hardware_destructive_interference_size / sizeof(T);
     static constexpr uint64_t kBufferWrapDelta = kBufferSize * kIncrement;
     static constexpr uint64_t kBufferSizeMask = kBufferSize - 1;
     static constexpr uint64_t kConsumerFlag = (1ULL << 63);
@@ -205,7 +206,7 @@ class Queue {
 
   void push(T val) {
     Tag tail{tail_.tag_raw_atomic.fetch_add(Tag::kIncrement,
-                                            std::memory_order::acq_rel)};
+                                            std::memory_order::relaxed)};
     do_push(std::move(val), tail);
   }
 
@@ -232,7 +233,7 @@ class Queue {
 
   T pop() {
     Tag tag{/*raw=*/head_.tag_raw_atomic.fetch_add(Tag::kIncrement,
-                                                   std::memory_order::acq_rel)};
+                                                   std::memory_order::relaxed)};
     tag.mark_as_consumer();
     return do_pop(tag);
   }
@@ -283,17 +284,30 @@ class Queue {
     // This is the strangest issue -- with Ubuntu clang version 15.0.7,
     // when observed_data is defined inside of the loop scope, benchmarks will
     // slow down by over 5x.
-    Data observed_data;
-    while (true) {
-      __int128 observed_data_line =
-          buffer_[idx].line.load(std::memory_order::acquire);
-      observed_data = Data{/*line=*/observed_data_line};
+    if constexpr (true) {
+      Data observed_data;
+      while (true) {
+        __int128 observed_data_line =
+            buffer_[idx].line.load(std::memory_order::acquire);
+        observed_data = Data{/*line=*/observed_data_line};
 
-      if (tag.is_paired(observed_data.tag)) {
-        break;
+        if (tag.is_paired(observed_data.tag)) {
+          break;
+        }
+
+        wait_for_data(tag, observed_data.tag);
       }
+    } else {
+      Tag observed_tag;
+      while (true) {
+        observed_tag = buffer_[idx].tag_atomic.load(std::memory_order::acquire);
 
-      wait_for_data(tag, observed_data.tag);
+        if (tag.is_paired(observed_tag)) {
+          break;
+        }
+
+        wait_for_data(tag, observed_tag);
+      }
     }
 
     Data new_data{/*value_=*/val, /*tag_=*/tag};
@@ -301,7 +315,7 @@ class Queue {
         new_data.line.load(std::memory_order::relaxed),
         std::memory_order::acq_rel)};
     if (old_data.tag.is_waiting()) {
-      buffer_[idx].tag_atomic.notify_all();
+      buffer_[idx].tag_atomic.notify_one();
     }
   }
 
@@ -326,12 +340,20 @@ class Queue {
     // This is another strange issue -- it is faster to exchange the __int128
     // value backing the Data object instead of just exchanging the 8 byte tag
     // value inside of that Data object.
-    Data old_data{buffer_[idx].line.exchange(
-        Data{/*value=*/T{}, /*tag=*/tag}.line.load(std::memory_order::relaxed),
-        std::memory_order::acq_rel)};
-
-    if (old_data.tag.is_waiting()) {
-      buffer_[idx].tag_atomic.notify_all();
+    if constexpr (true) {
+      Data old_data{
+          buffer_[idx].line.exchange(Data{/*value=*/T{}, /*tag=*/tag}.line.load(
+                                         std::memory_order::relaxed),
+                                     std::memory_order::acq_rel)};
+      if (old_data.tag.is_waiting()) {
+        buffer_[idx].tag_atomic.notify_one();
+      }
+    } else {
+      Tag old_tag{
+          buffer_[idx].tag_atomic.exchange(tag, std::memory_order::acq_rel)};
+      if (old_tag.is_waiting()) {
+        buffer_[idx].tag_atomic.notify_one();
+      }
     }
 
     return observed_data.value;
